@@ -99,13 +99,13 @@ STAGED="/Applications/.$APP.install-$$"
 rm -rf "$STAGED"
 trap 'rm -rf "$STAGED"' EXIT
 ditto "$APP" "$STAGED"
-# Die laufende Instanz ist ein Python-Prozess, kein Prozess namens JPEGdrop —
-# deshalb über den Skriptpfad beenden statt über den Bundle-Namen.
+# Der native Starter braucht seinen ausführbaren Bundle-Pfad; ältere Fassungen
+# und Konvertierungen laufen als Python-Prozesse unter ihren Skriptpfaden.
 #
-# Gesucht werden zwei vollstaendige Pfade: der aus der installierten App (die
+# Gesucht werden die vollstaendigen Pfade aus der installierten App (die
 # gleich ersetzt wird) und der aus diesem Repo (eine direkt gestartete
 # Entwicklungsinstanz). Seit das Bundle seinen eigenen Interpreter mitbringt,
-# laeuft die installierte App unter ihrem EIGENEN Pfad in /Applications — der
+# laeuft die installierte App unter ihren EIGENEN Pfaden in /Applications — der
 # Repo-Pfad allein wuerde sie nicht mehr finden und eine laufende Instanz
 # ungebremst weiterlaufen lassen, waehrend ihr Bundle unter ihr ausgetauscht
 # wird. Das fruehere `pkill -f "app/menu_app.py"` traf umgekehrt jeden Prozess,
@@ -167,13 +167,13 @@ stop_repo_instances() {
           ;;
         python*:*.py|Python*:*.py)
           case " $command " in
-          *" $script_path "*)
-          local prefix="${command%%"$script_path"*}"
-          case " $prefix " in
-            *" -c "*|*" -m "*|*".py "*) matched=0 ;;
-            *) matched=1 ;;
-          esac
-          ;;
+            *" $script_path "*)
+              local prefix="${command%%"$script_path"*}"
+              case " $prefix " in
+                *" -c "*|*" -m "*|*".py "*) matched=0 ;;
+                *) matched=1 ;;
+              esac
+              ;;
           esac
           ;;
       esac
