@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 import unittest
+import threading
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import jpegdrop
@@ -31,6 +33,31 @@ def wait_for(predicate, seconds=6):
 
 
 class JobsTests(unittest.TestCase):
+    def test_update_gate_waits_for_inventory_and_inventory_can_be_cancelled(self):
+        from app.input_plan import InventoryCancelled
+        entered,release=threading.Event(),threading.Event()
+        source=self.image()
+        def inventory(paths,options,*,cancelled):
+            entered.set()
+            self.assertTrue(release.wait(6))
+            if cancelled():raise InventoryCancelled()
+            raise AssertionError('Inventur hätte abgebrochen werden müssen')
+        manager=self.manager()
+        with patch('app.jobs.inventory_inputs',inventory):
+            identifier=manager.submit([str(self.root)],SETTINGS)
+            self.assertTrue(entered.wait(6))
+            self.assertEqual(manager.snapshot()[1][0].state,'scanning')
+            self.assertFalse(manager.prepare_for_update())
+            with self.assertRaisesRegex(ValueError,'Update'):
+                manager.submit([str(source)],SETTINGS)
+            manager.cancel(identifier);release.set()
+            self.assertTrue(manager.wait_idle(6))
+        self.assertEqual(manager.snapshot()[1][0].state,'cancelled')
+        self.assertTrue(manager.prepare_for_update())
+        manager.resume_after_update();manager.submit([str(source)],SETTINGS)
+        self.assertTrue(manager.wait_idle(6))
+        self.assertEqual(manager.snapshot()[1][-1].state,'completed')
+
     def test_cancel_during_size_search_cleans_candidate_and_keeps_source(self):
         source=self.image();before=source.read_bytes()
         wrapper=self.wrapper('''
