@@ -20,7 +20,7 @@ Was es macht — pro Bild:
   - Bilder optional proportional verkleinern, niemals vergrößern
   - Mehrbildquellen und nicht anwendbare Farbprofile werden abgelehnt
 
-Zieldatei liegt NEBEN der Quelle. Name:
+In der Standardablage liegt die Zieldatei NEBEN der Quelle. Name:
   - Codec entspricht der Quell-Endung NICHT -> gleicher Name, neue Codec-Endung
   - Codec entspricht der Quell-Endung           -> Suffix "-klein" anhängen
     (z.B. PNG -> PNG, JPEG -> JPEG, AVIF -> AVIF), sonst Kollision
@@ -40,6 +40,8 @@ import io
 import json
 import os
 import re
+import math
+from decimal import Decimal, InvalidOperation, localcontext
 import signal
 import shutil
 import sys
@@ -56,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
                             inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.8.0"
+__version__ = "2.9.0"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -588,6 +590,9 @@ class ImageOptions:
     max_edge: int = 0
     preserve_alpha: bool = False
     background: str = "#FFFFFF"
+    target_bytes: int = 0
+    allow_target_resize: bool = False
+    minimum_target_edge: int = 320
 
     def __post_init__(self):
         if type(self.max_edge) is not int or self.max_edge < 0:
@@ -597,11 +602,35 @@ class ImageOptions:
         if not isinstance(self.background, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", self.background):
             raise ValueError("Die Hintergrundfarbe muss als #RRGGBB angegeben werden.")
         object.__setattr__(self, "background", self.background.upper())
+        if type(self.target_bytes) is not int or self.target_bytes < 0:
+            raise ValueError("Die Zielgröße muss eine ganze Bytezahl ab 0 sein.")
+        if type(self.allow_target_resize) is not bool:
+            raise ValueError("Zusätzliche Verkleinerung muss ein Wahrheitswert sein.")
+        if type(self.minimum_target_edge) is not int or self.minimum_target_edge < 1:
+            raise ValueError("Die Mindestkante muss eine positive ganze Pixelzahl sein.")
 
     @classmethod
     def from_settings(cls, settings: dict) -> ImageOptions:
         return cls(**{key: settings.get(key, value) for key, value in
-                      {"max_edge": 0, "preserve_alpha": False, "background": "#FFFFFF"}.items()})
+                      {"max_edge": 0, "preserve_alpha": False, "background": "#FFFFFF",
+                       "target_bytes": 0, "allow_target_resize": False, "minimum_target_edge": 320}.items()})
+
+
+def parse_target_size(value: str) -> int:
+    match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?|[.,]\d+)\s*(B|KB|MB|KiB|MiB)?\s*", value, re.IGNORECASE)
+    if not match:
+        raise ValueError("Zielgröße als Zahl mit B, KB, MB, KiB oder MiB angeben; 0 deaktiviert das Limit.")
+    try:
+        amount = Decimal(match[1].replace(",", "."))
+        with localcontext() as context:
+            context.prec = max(28, len(match[1]) + 20)
+            result = int(amount * {"b": 1, "kb": 1000, "mb": 1_000_000,
+                                   "kib": 1024, "mib": 1_048_576}[(match[2] or "B").lower()])
+    except (InvalidOperation, ValueError, OverflowError):
+        raise ValueError("Ungültige Zielgröße.") from None
+    if amount > 0 and result < 1:
+        raise ValueError("Eine aktive Zielgröße muss mindestens ein Byte betragen.")
+    return result
 
 
 def normalize_image(img: Image.Image, *, notices: list[dict] | None = None,
@@ -729,7 +758,7 @@ def _prepare_for_preset(
     return quantized
 
 
-def empty_result(src: Path, codec_name: str, preset_name: str) -> dict:
+def empty_result(src: Path, codec_name: str, preset_name: str, *, target_bytes: int = 0) -> dict:
     """Gemeinsamer Ergebnisvertrag, auch für noch nicht verarbeitete Auftragsbilder."""
     return {
         "source": str(src), "target": None, "src_bytes": None, "out_bytes": None,
@@ -738,7 +767,60 @@ def empty_result(src: Path, codec_name: str, preset_name: str) -> dict:
         "error_code": None, "warnings": [],
         "source_width": None, "source_height": None, "output_width": None,
         "output_height": None, "resized": False, "alpha_preserved": False,
+        "target_bytes": target_bytes, "size_limit_met": None, "encoding_attempts": 0,
+        "smallest_attempt_bytes": None,
     }
+
+
+def encode_with_limit(img: Image.Image, path: Path, codec: Codec, preset_name: str,
+                      fixed_quality: int | None, options: ImageOptions, result: dict,
+                      on_event: Callable[[str, dict | None], None] | None) -> None:
+    result["target_bytes"] = options.target_bytes
+    if not options.target_bytes:
+        kwargs = _save_kwargs(codec, preset_name, max(img.size), fixed_quality)
+        _prepare_for_preset(img, codec, preset_name).save(path, **kwargs)
+        result["encoding_attempts"] = 1
+        return
+
+    edge = max(img.size)
+    minimum = min(edge, options.minimum_target_edge)
+    size_count = 4 if options.allow_target_resize and minimum < edge else 1
+    smallest = None
+    for size_index in range(size_count):
+        candidate = img.copy()
+        if edge < max(img.size):
+            candidate.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        kwargs = _save_kwargs(codec, preset_name, max(candidate.size), fixed_quality)
+        upper = kwargs.get("quality")
+        qualities = (range(upper, 14, -1) if upper is not None and fixed_quality is None
+                     else (upper,))
+        for quality in qualities:
+            result["encoding_attempts"] += 1
+            if on_event is not None:
+                on_event("optimizing", {"attempt": result["encoding_attempts"],
+                         "maximum": size_count * (81 if upper is not None and fixed_quality is None else 1)})
+            actual = dict(kwargs)
+            if quality is not None:
+                actual["quality"] = quality
+            prepared = _prepare_for_preset(candidate.copy(), codec, preset_name)
+            prepared.save(path, **actual)
+            size = path.stat().st_size
+            smallest = size if smallest is None else min(smallest, size)
+            result["smallest_attempt_bytes"] = smallest
+            if size <= options.target_bytes:
+                result.update(quality=quality, max_edge=max(candidate.size), output_width=candidate.width,
+                              output_height=candidate.height, size_limit_met=True,
+                              resized=candidate.size != (result["source_width"], result["source_height"]))
+                return
+        if edge <= minimum:
+            break
+        edge = (minimum if size_index == size_count - 2 else
+                max(minimum, min(edge - 1, int(edge * min(.85, math.sqrt(options.target_bytes / smallest) * .95)))))
+    result.update(size_limit_met=False, quality=None, output_width=None, output_height=None,
+                  max_edge=None, resized=False, alpha_preserved=False)
+    raise ImageInputError("target_size_unreachable",
+        f"Zielgröße {options.target_bytes} Byte nicht erreichbar. Kleinster geprüfter Kandidat: "
+        f"{smallest} Byte; keine Ausgabe erzeugt.")
 
 
 def _process_one(
@@ -753,7 +835,7 @@ def _process_one(
     output_directory: Path | None = None,
 ) -> dict:
     """Gemeinsame Lade-, Normalisierungs-, Speicher- und Fehlerpipeline."""
-    result = empty_result(src, codec.name, preset_name)
+    result = empty_result(src, codec.name, preset_name, target_bytes=options.target_bytes)
     try:
         if options.preserve_alpha and codec.name == "jpeg":
             raise ImageInputError("unsupported_alpha", "JPEG kann keine Transparenz erhalten. PNG, AVIF oder WebP wählen.")
@@ -786,7 +868,6 @@ def _process_one(
 
         save_kwargs = _save_kwargs(codec, preset_name, max_edge, fixed_quality)
         result["quality"] = save_kwargs.get("quality")
-        img = _prepare_for_preset(img, codec, preset_name)
 
         base_path = target_base_path(src, codec, name_suffix, output_directory)
         if output_directory is not None:
@@ -806,7 +887,7 @@ def _process_one(
         source_fd: int | None = None
         try:
             temp_path.chmod(0o600)
-            img.save(temp_path, **save_kwargs)
+            encode_with_limit(img, temp_path, codec, preset_name, fixed_quality, options, result, on_event)
             # Vor einem eventuell sehr restriktiven Endmodus lesbar oeffnen.
             # Der offene Deskriptor versorgt den O_EXCL-Kopierfallback auch
             # dann noch, wenn der Pfad danach nur schreibbar ist.
@@ -915,6 +996,8 @@ def format_line(r: dict) -> str:
         f"{human_size(r['src_bytes'])} -> {human_size(r['out_bytes'])} "
         f"({arrow}{abs(pct):.0f}%)"
     )
+    if r.get("target_bytes"):
+        line += f" · Limit {r['target_bytes']} B eingehalten"
     for notice in r.get("warnings", []):
         line += f"\n    ⚠ {notice['message']}"
     if r.get("alpha_preserved"):
@@ -984,6 +1067,9 @@ DEFAULT_SETTINGS = {
     "max_edge": 0,
     "preserve_alpha": False,
     "background": "#FFFFFF",
+    "target_bytes": 0,
+    "allow_target_resize": False,
+    "minimum_target_edge": 320,
     "recursive": False,
     "output_mode": "beside",
     "output_directory": "",
@@ -1000,7 +1086,7 @@ def validated_settings(data: dict) -> dict:
     preset = data.get("preset")
     valid = {p.name for p in CODECS[codec].presets}
     settings["preset"] = preset if isinstance(preset, str) and preset in valid else CODECS[codec].default_preset
-    for key in ("max_edge", "preserve_alpha", "background"):
+    for key in ("max_edge", "preserve_alpha", "background", "target_bytes", "allow_target_resize", "minimum_target_edge"):
         try:
             options = ImageOptions(**{key: data.get(key, DEFAULT_SETTINGS[key])})
         except ValueError:
@@ -1071,6 +1157,12 @@ def build_parser() -> argparse.ArgumentParser:
     alpha.add_argument("--flatten-alpha", dest="preserve_alpha", action="store_false",
                        help="Transparenz auf die Hintergrundfarbe legen.")
     parser.add_argument("--background", metavar="#RRGGBB", help="Opake sRGB-Hintergrundfarbe beim Entfernen von Transparenz.")
+    parser.add_argument("--target-size", help="Dateigrößengrenze, z.B. 500KB oder 1MiB; KB/MB dezimal, KiB/MiB binär, 0 = aus.")
+    shrink = parser.add_mutually_exclusive_group()
+    shrink.add_argument("--target-resize", dest="allow_target_resize", action="store_true", default=None,
+                        help="Für das Größenlimit zusätzlich bis zur Mindestkante verkleinern.")
+    shrink.add_argument("--no-target-resize", dest="allow_target_resize", action="store_false")
+    parser.add_argument("--target-min-edge", type=int, help="Mindestkante der optionalen zusätzlichen Verkleinerung.")
     parser.add_argument(
         "-c",
         "--codec",
@@ -1190,6 +1282,9 @@ def main(argv: list[str] | None = None) -> int:
             preserve_alpha=(settings["preserve_alpha"] if args.preserve_alpha is None else args.preserve_alpha)
                            and codec.name != "jpeg",
             background=settings["background"] if args.background is None else args.background,
+            target_bytes=settings["target_bytes"] if args.target_size is None else parse_target_size(args.target_size),
+            allow_target_resize=settings["allow_target_resize"] if args.allow_target_resize is None else args.allow_target_resize,
+            minimum_target_edge=settings["minimum_target_edge"] if args.target_min_edge is None else args.target_min_edge,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -1228,7 +1323,7 @@ def main(argv: list[str] | None = None) -> int:
             entries = [InputEntry(original_paths.get(entry.source, entry.source), entry.output_directory)
                        for entry in inventory.entries]
             for issue in inventory.issues:
-                result = empty_result(Path(issue.source), codec.name, preset_name)
+                result = empty_result(Path(issue.source), codec.name, preset_name, target_bytes=options.target_bytes)
                 result.update(status="error" if issue.error else "skipped",
                               error=issue.message if issue.error else None,
                               error_code="inventory_error" if issue.error else "unsupported_input",
@@ -1269,7 +1364,9 @@ def main(argv: list[str] | None = None) -> int:
 
     def image_event(kind: str, result: dict | None) -> None:
         nonlocal publishing
-        if kind == "result":
+        if kind == "optimizing":
+            emit(kind, index=index, total=total, **result)
+        elif kind == "result":
             results.append(result)
             emit(kind, index=index, total=total, result=result)
             publishing = False

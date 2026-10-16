@@ -31,6 +31,29 @@ def wait_for(predicate, seconds=6):
 
 
 class JobsTests(unittest.TestCase):
+    def test_cancel_during_size_search_cleans_candidate_and_keeps_source(self):
+        source=self.image();before=source.read_bytes()
+        wrapper=self.wrapper('''
+import time
+original=jpegdrop.Image.Image.save
+def slow(image,*args,**kwargs):
+    time.sleep(.1)
+    return original(image,*args,**kwargs)
+jpegdrop.Image.Image.save=slow
+raise SystemExit(jpegdrop.main())
+''')
+        manager=self.manager(wrapper,cancel_grace=.1)
+        identifier=manager.submit([str(source)],{**SETTINGS,'target_bytes':1})
+        wait_for(lambda:manager.snapshot()[1][0].optimization is not None)
+        manager.cancel(identifier)
+        self.assertTrue(manager.wait_idle(6))
+        job=manager.snapshot()[1][0]
+        self.assertEqual(job.state,'cancelled')
+        self.assertFalse(job.targets)
+        self.assertIsNone(job.optimization)
+        self.assertEqual(source.read_bytes(),before)
+        self.assertEqual(list(self.root.glob('.jpegdrop-*')),[])
+
     def test_inventory_larger_than_os_argument_limit_completes_via_manifest(self):
         root = self.root
         for index in range(3):
@@ -79,12 +102,14 @@ raise SystemExit(jpegdrop.main())
         for source in (first, second):
             Image.new("RGBA", (48, 48), (200, 100, 50, 64)).save(source)
         settings = {"codec": "webp", "preset": "verlustfrei", "max_edge": 24,
-                    "preserve_alpha": True, "background": "#123456"}
+                    "preserve_alpha": True, "background": "#123456", "target_bytes": 1000,
+                    "allow_target_resize": True, "minimum_target_edge": 64}
         manager = self.manager(wrapper)
         manager.submit([str(first)], settings)
         wait_for(lambda: manager.snapshot()[1][0].pid is not None)
         manager.submit([str(second)], settings)
-        settings.update(max_edge=1, preserve_alpha=False, background="#FFFFFF")
+        settings.update(max_edge=1, preserve_alpha=False, background="#FFFFFF", target_bytes=1,
+                        allow_target_resize=False, minimum_target_edge=1)
         self.assertEqual(manager.snapshot()[1][1].state, "queued")
         (self.root/'release').touch()
         wait_for(lambda: not manager.has_active_jobs)
@@ -93,6 +118,9 @@ raise SystemExit(jpegdrop.main())
             self.assertEqual(job.options.max_edge, 24)
             self.assertTrue(job.options.preserve_alpha)
             self.assertEqual(job.options.background, "#123456")
+            self.assertEqual(job.options.target_bytes, 1000)
+            self.assertTrue(job.options.allow_target_resize)
+            self.assertEqual(job.options.minimum_target_edge, 64)
             with Image.open(job.targets[0]) as output:
                 self.assertEqual(output.size, (24, 24))
                 self.assertEqual(output.mode, "RGBA")

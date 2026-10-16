@@ -12,6 +12,32 @@ from app.menu_app import SettingsWindowController
 
 
 class SettingsWindowTests(unittest.TestCase):
+    def test_target_size_validation_units_and_cancel(self):
+        A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyProhibited)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(jpegdrop, "SETTINGS_DIR", Path(directory)), \
+                patch.object(jpegdrop, "SETTINGS_PATH", Path(directory) / "settings.json"):
+            saved={**jpegdrop.DEFAULT_SETTINGS,"target_bytes":75500,"minimum_target_edge":64}
+            jpegdrop.save_settings(saved);original=jpegdrop.SETTINGS_PATH.read_bytes()
+            controller=SettingsWindowController.alloc().init()
+            try:
+                controller._populate_from_settings()
+                self.assertEqual(controller._target_size.stringValue(),"75,5")
+                self.assertFalse(controller._target_minimum.isEnabled())
+                controller._target_size.setStringValue_("invalid");controller.saveAndClose_(None)
+                self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(),original)
+                self.assertFalse(controller._validation_error.isHidden())
+                controller._target_size.setStringValue_("50")
+                controller._target_resize.setState_(A.NSControlStateValueOn);controller.targetOptionsChanged_(None)
+                controller._target_minimum.setStringValue_("0");controller.saveAndClose_(None)
+                self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(),original)
+                controller._target_minimum.setStringValue_("64");controller.saveAndClose_(None)
+                self.assertEqual(jpegdrop.load_settings(),{**saved,"target_bytes":50000,"allow_target_resize":True})
+                controller._populate_from_settings();controller._target_size.setStringValue_("99")
+                controller.close_(None);controller._populate_from_settings()
+                self.assertEqual(controller._target_size.stringValue(),"50")
+            finally:controller._window.close()
+
     def test_output_modes_validate_active_fields_preserve_directory_and_cancel(self):
         A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyProhibited)
         with tempfile.TemporaryDirectory() as directory, \

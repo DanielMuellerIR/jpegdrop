@@ -79,6 +79,24 @@ Eingaben, auch frühere Konvertierungen. Bei Kollisionen wird hochgezählt;
 Quellen und bestehende Ausgaben bleiben unverändert. Bei überlappenden
 Eingaben zählt das erste Vorkommen.
 
+## Dateigrößengrenze
+
+**Zielgröße** begrenzt optional die tatsächlichen Bytes jeder Ausgabedatei.
+In den Einstellungen gilt KB = 1000 Byte; null deaktiviert das Limit. JPEG,
+AVIF und verlustbehaftetes WebP prüfen ab der gewählten Preset-Qualität
+abwärts bis q15. Der erste passende Kandidat wird verwendet; jede höhere
+Qualität wird tatsächlich geprüft. Eine streng monotone Dateigröße wird
+nicht vorausgesetzt. PNG und verlustfreies WebP behalten ihr Kodierverfahren.
+Das ältere `--quality` bleibt exakt.
+
+Die gewählten Bildmaße haben Vorrang. Weiteres Verkleinern erfordert
+**Für Zielgröße weiter verkleinern** und eine Mindestkante (Standard 320 Pixel).
+Geprüft werden höchstens vier Größen und 81 Qualitätsstufen je Größe. Jeder
+Kandidat entsteht aus derselben vorbereiteten Pixelbasis. Die Suche zeigt
+Fortschritt und lässt sich abbrechen. Passt kein erlaubter Kandidat, meldet
+JPEGdrop `target_size_unreachable` und erzeugt keine Ausgabe. Eine zu große
+Datei wird nie stillschweigend als Erfolg veröffentlicht.
+
 ## Aufträge, Fortschritt und Abbruch
 
 **Aufträge…** (⌘0) öffnet die Liste mit Fortschritt, aktuellem Dateinamen,
@@ -120,6 +138,7 @@ Aus einem Quellcheckout mit installierten Abhängigkeiten:
 .venv/bin/python jpegdrop.py --codec webp --preset verlustfrei --preserve-alpha --max-edge 1600 foto.png
 .venv/bin/python jpegdrop.py --recursive --output-dir Exporte --codec jpeg Album
 .venv/bin/python jpegdrop.py --output-subdir JPEGdrop --codec webp foto.png
+.venv/bin/python jpegdrop.py --target-size 500KB --target-resize --target-min-edge 320 foto.png
 .venv/bin/python jpegdrop.py --list-presets
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
@@ -138,6 +157,10 @@ opaken sRGB-Hintergrund.
 `--suffix` ändert das Standardsuffix `-klein` bei Quellen, die schon im Ziel-Codec
 vorliegen. `-q/--quality` bleibt für JPEG mit fester Qualität verfügbar.
 Der Exit-Status ist die Anzahl Fehler, begrenzt auf 125; null bedeutet Erfolg.
+
+`--target-size 0` deaktiviert ein gespeichertes Größenlimit, `--no-target-resize`
+verhindert zusätzliches Verkleinern. B/KB/MB verwenden 1/1000/1000000 Byte;
+KiB/MiB verwenden 1024/1048576 Byte.
 
 `--no-recursive` und `--beside` überschreiben gespeicherte Ordner-/Ablageoptionen.
 Für große Dateilisten nimmt `--input-plan plan.json` ein JSON-Array aus Objekten

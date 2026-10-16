@@ -20,12 +20,12 @@
     <string>applet</string>
     <!-- Reguläre App MIT Dock-Icon (Dock-Droplet): Bilder aufs Dock-Icon ziehen.
          Kein LSUIElement mehr -> Doppelklick zeigt ein sichtbares Dock-Icon. -->
-    <!-- Übernimmt die gleichen Dateitypen wie das alte Droplet. -->
+    <!-- Bilddateien und Ordner für Dock-/Finder-Drops registrieren. -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>Bilddatei</string>
+            <string>Bilder und Ordner</string>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
             <key>LSItemContentTypes</key>

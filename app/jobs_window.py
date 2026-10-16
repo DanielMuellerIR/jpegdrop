@@ -31,6 +31,8 @@ def result_detail(result: dict) -> str:
         detail = f"{dimensions} · {detail}"
         if result.get("alpha_preserved"):
             detail += " · Transparenz erhalten"
+    if result.get("target_bytes") and result.get("size_limit_met"):
+        detail += f" · ≤ {result['target_bytes']} B · {jpegdrop.quality_label(result['codec'], result['preset'], result['quality'])}"
     return detail
 
 
@@ -182,6 +184,8 @@ class JobsWindowController(F.NSObject):
                 text += f" · {len(job.skipped)} übersprungen"
             if job.current:
                 text += f" · {Path(job.current).name}"
+            if job.optimization:
+                text += f" · {job.optimization}"
             self._progress.setStringValue_(text)
             self._progress.setToolTip_(job.current)
             if job.all_results:

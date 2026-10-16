@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 # Cocoa-Stack -----------------------------------------------------------
@@ -144,6 +145,9 @@ class SettingsWindowController(NSObject):
         self._output_choose = None
         self._output_directory_value = ""
         self._folder_panel = None
+        self._target_size = None
+        self._target_resize = None
+        self._target_minimum = None
         # Interne Codec-Namen, Index-gekoppelt zu den Popup-Labels (s. _populate).
         self._codec_names = None
         # Callback des AppDelegate: wird nach erfolgreichem Speichern gerufen,
@@ -177,6 +181,10 @@ class SettingsWindowController(NSObject):
         # Preset direkt aus — keine zweite Auswahl-Schleife nötig.
         self._refresh_presets(None)
         self._max_edge.setStringValue_(str(s["max_edge"]))
+        self._target_size.setStringValue_(str(Decimal(s["target_bytes"]) / 1000).replace(".", ","))
+        self._target_resize.setState_(AppKit.NSControlStateValueOn if s["allow_target_resize"] else AppKit.NSControlStateValueOff)
+        self._target_minimum.setStringValue_(str(s["minimum_target_edge"]))
+        self._refresh_target_options()
         self._preserve_alpha.setState_(AppKit.NSControlStateValueOn if s["preserve_alpha"] else AppKit.NSControlStateValueOff)
         color = s["background"]
         self._background.setColor_(AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
@@ -245,7 +253,7 @@ class SettingsWindowController(NSObject):
         info = NSTextField.wrappingLabelWithString_(
             "Diese Einstellungen werden gespeichert und gelten ab dem nächsten "
             "Bild-Drop. Codec + Preset bestimmen das Ausgabeformat und die "
-            "Komprimierung neben der Quelldatei."
+            "Komprimierung der Kopien."
         )
         info.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         info.setFont_(AppKit.NSFont.systemFontOfSize_(AppKit.NSFont.smallSystemFontSize()))
@@ -264,10 +272,24 @@ class SettingsWindowController(NSObject):
         background.setAccessibilityLabel_("Hintergrundfarbe")
         background.widthAnchor().constraintEqualToConstant_(60).setActive_(True)
         background.heightAnchor().constraintEqualToConstant_(26).setActive_(True)
+        target_size = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 120, 24))
+        target_size.setAccessibilityLabel_("Zielgröße in KB")
+        target_size.widthAnchor().constraintEqualToConstant_(120).setActive_(True)
+        size_row = NSStackView.stackViewWithViews_([target_size, NSTextField.labelWithString_("KB · 1000 Byte · 0 = aus")])
+        size_row.setSpacing_(10)
+        target_minimum = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 80, 24))
+        target_minimum.setAccessibilityLabel_("Mindestkante für Zielgröße")
+        target_minimum.widthAnchor().constraintEqualToConstant_(80).setActive_(True)
+        minimum_row = NSStackView.stackViewWithViews_([target_minimum, NSTextField.labelWithString_("Pixel · nur bei Größenlimit")])
+        minimum_row.setSpacing_(10)
+        target_resize = NSButton.checkboxWithTitle_target_action_(
+            "Für Zielgröße weiter verkleinern", self, "targetOptionsChanged:")
         image_grid = AppKit.NSGridView.gridViewWithViews_([
             [NSTextField.labelWithString_("Längere Kante:"), edge_row],
             [NSTextField.labelWithString_("Transparenz:"), preserve],
             [NSTextField.labelWithString_("Hintergrund:"), background],
+            [NSTextField.labelWithString_("Zielgröße:"), size_row],
+            [NSTextField.labelWithString_("Mindestkante:"), minimum_row],
         ])
         image_grid.setRowSpacing_(10)
         image_grid.setColumnSpacing_(10)
@@ -343,6 +365,7 @@ class SettingsWindowController(NSObject):
         content.addArrangedSubview_(info)
         content.addArrangedSubview_(image_separator)
         content.addArrangedSubview_(image_grid)
+        content.addArrangedSubview_(target_resize)
         content.addArrangedSubview_(image_info)
         content.addArrangedSubview_(output_separator)
         content.addArrangedSubview_(recursive)
@@ -389,6 +412,9 @@ class SettingsWindowController(NSObject):
         self._preserve_alpha = preserve
         self._background = background
         self._image_info = image_info
+        self._target_size = target_size
+        self._target_resize = target_resize
+        self._target_minimum = target_minimum
         self._validation_error = validation
         self._recursive = recursive
         self._output_mode = output_mode
@@ -403,6 +429,17 @@ class SettingsWindowController(NSObject):
 
     def imageOptionsChanged_(self, sender):
         self._refresh_image_options()
+
+    def targetOptionsChanged_(self, sender):
+        self._refresh_target_options()
+
+    def _refresh_target_options(self):
+        active = self._target_resize.state() == AppKit.NSControlStateValueOn
+        self._target_minimum.setEnabled_(active)
+        if not active:
+            value = self._target_minimum.stringValue().strip()
+            if not value.isascii() or not value.isdecimal() or int(value) < 1:
+                self._target_minimum.setStringValue_(str(jpegdrop.load_settings()["minimum_target_edge"]))
 
     def outputModeChanged_(self, sender):
         self._refresh_output_options()
@@ -449,9 +486,10 @@ class SettingsWindowController(NSObject):
             self._preserve_alpha.setState_(AppKit.NSControlStateValueOff)
         preserved = self._preserve_alpha.state() == AppKit.NSControlStateValueOn
         self._background.setEnabled_(not preserved)
-        self._image_info.setStringValue_(
+        alpha_info = (
             "JPEG entfernt Transparenz mit der gewählten Hintergrundfarbe. Bilder werden niemals vergrößert."
             if jpeg else "Transparenz optional erhalten; sonst wird die Hintergrundfarbe verwendet. Bilder werden niemals vergrößert.")
+        self._image_info.setStringValue_(alpha_info + " Größenlimits senken die Qualität bis q15; verlustfreie Presets bleiben verlustfrei.")
         self._window.setContentSize_(self._window.contentView().fittingSize())
 
     def _refresh_presets(self, _sender):
@@ -485,8 +523,14 @@ class SettingsWindowController(NSObject):
                 color = self._background.color().colorUsingColorSpace_(AppKit.NSColorSpace.sRGBColorSpace())
                 background = "#" + "".join(f"{round(max(0, min(1, c)) * 255):02X}"
                     for c in (color.redComponent(), color.greenComponent(), color.blueComponent()))
+                minimum = self._target_minimum.stringValue().strip()
+                if not minimum.isascii() or not minimum.isdecimal() or int(minimum) < 1:
+                    raise ValueError("Die Mindestkante muss eine positive ganze Pixelzahl sein.")
                 options = jpegdrop.ImageOptions(int(edge),
-                    self._preserve_alpha.state() == AppKit.NSControlStateValueOn, background)
+                    self._preserve_alpha.state() == AppKit.NSControlStateValueOn, background,
+                    target_bytes=jpegdrop.parse_target_size(self._target_size.stringValue() + "KB"),
+                    allow_target_resize=self._target_resize.state() == AppKit.NSControlStateValueOn,
+                    minimum_target_edge=int(minimum))
                 inventory = InventoryOptions(
                     recursive=self._recursive.state() == AppKit.NSControlStateValueOn,
                     output_mode=["beside", "subfolder", "directory"][self._output_mode.indexOfSelectedItem()],
@@ -496,6 +540,8 @@ class SettingsWindowController(NSObject):
                 jpegdrop.save_settings({"codec": codec_name, "preset": preset_name,
                     "max_edge": options.max_edge, "preserve_alpha": options.preserve_alpha,
                     "background": options.background, "recursive": inventory.recursive,
+                    "target_bytes": options.target_bytes, "allow_target_resize": options.allow_target_resize,
+                    "minimum_target_edge": options.minimum_target_edge,
                     "output_mode": inventory.output_mode, "output_directory": inventory.output_directory,
                     "output_subdir": inventory.output_subdir})
             except (ValueError, OSError) as error:

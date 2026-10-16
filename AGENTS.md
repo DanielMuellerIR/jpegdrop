@@ -23,6 +23,7 @@ must never be modified or overwritten, and output names must handle collisions.
   stripping metadata. Invalid profiles and multiple frames produce clear errors.
 - Apply optional proportional resizing without upscaling after orientation and color/alpha preparation.
 - Snapshot every image option per job and pass it explicitly to the conversion CLI.
+- Publish size-limited outputs only when their actual encoded bytes fit. Keep lossless presets and use a common pixel basis for all candidates.
 - Keep conversion logic in the CLI core; the interface does not implement it again.
 - Do not write bytecode or other files into the signed bundle at runtime.
 - Bundle paths must be relative to the bundle, without build-machine paths.

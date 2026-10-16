@@ -44,6 +44,7 @@ class Job:
     problem: str | None = None
     pid: int | None = None
     publishing: bool = False
+    optimization: str | None = None
     skipped: list[dict] = field(default_factory=list)
 
     @property
@@ -123,7 +124,7 @@ class JobManager:
                       codec.name, preset.name, options=options, inventory_options=inventory_options)
             job.input_paths = job.paths
             for path, reason in (skipped or {}).items():
-                result = jpegdrop.empty_result(Path(os.path.abspath(path)), codec.name, preset.name)
+                result = jpegdrop.empty_result(Path(os.path.abspath(path)), codec.name, preset.name, target_bytes=options.target_bytes)
                 result.update(status="skipped", error_code="unsupported_input", skip_reason=reason)
                 job.skipped.append(result)
             self._jobs.append(job)
@@ -184,7 +185,7 @@ class JobManager:
 
     def _finish_missing(self, job: Job, *, cancelled: bool) -> None:
         for path in job.paths[len(job.results):]:
-            result = jpegdrop.empty_result(Path(path), job.codec, job.preset)
+            result = jpegdrop.empty_result(Path(path), job.codec, job.preset, target_bytes=job.options.target_bytes)
             result["status"] = "cancelled" if cancelled else "error"
             result["error_code"] = "cancelled" if cancelled else "worker_failed"
             if not cancelled:
@@ -209,7 +210,7 @@ class JobManager:
                     job.paths = tuple(entry.source for entry in inventory.entries)
                     job.output_directories = tuple(entry.output_directory for entry in inventory.entries)
                     for issue in inventory.issues:
-                        result = jpegdrop.empty_result(Path(issue.source), job.codec, job.preset)
+                        result = jpegdrop.empty_result(Path(issue.source), job.codec, job.preset, target_bytes=job.options.target_bytes)
                         result.update(status="error" if issue.error else "skipped",
                                       error=issue.message if issue.error else None,
                                       error_code="inventory_error" if issue.error else "unsupported_input",
@@ -230,7 +231,7 @@ class JobManager:
                 with self._condition:
                     missing = len(job.results) < len(job.paths) or job.state == "cancelling"
                     self._finish_missing(job, cancelled=job.cancel_requested)
-                    job.current, job.pid = None, None
+                    job.current, job.pid, job.optimization = None, None, None
                     successes = sum(bool(r.get("target")) and not r.get("error") for r in job.results)
                     failures = sum(bool(r.get("error")) for r in job.all_results)
                     if job.cancel_requested and missing:
@@ -264,6 +265,14 @@ class JobManager:
                 if index != len(job.results) or index >= len(job.paths):
                     raise ValueError("Unstimmiger CLI-Fortschritt")
                 job.current = job.paths[index]
+                job.optimization = None
+                self._changed()
+            elif kind == "optimizing":
+                attempt, maximum = event.get("attempt"), event.get("maximum")
+                if (event.get("index") != len(job.results) or type(attempt) is not int
+                        or type(maximum) is not int or not 1 <= attempt <= maximum <= 324):
+                    raise ValueError("Unstimmiger Optimierungsfortschritt")
+                job.optimization = f"Größensuche: {event.get('attempt')} / {event.get('maximum')}"
                 self._changed()
             elif kind == "result":
                 result = event.get("result")
@@ -276,6 +285,7 @@ class JobManager:
                 job.results.append(result)
                 job.completed = len(job.results)
                 job.current = None
+                job.optimization = None
                 self._changed()
             elif kind not in {"started", "finished"}:
                 raise ValueError("Unbekanntes CLI-Ereignis")
@@ -293,7 +303,10 @@ class JobManager:
         cmd = [self.python, "-I", "-B", self.script, "--codec", job.codec,
                "--preset", job.preset, "--max-edge", str(job.options.max_edge),
                "--preserve-alpha" if job.options.preserve_alpha else "--flatten-alpha",
-               "--background", job.options.background, "--events", "--input-plan", str(plan)]
+               "--background", job.options.background, "--target-size", f"{job.options.target_bytes}B",
+               "--target-resize" if job.options.allow_target_resize else "--no-target-resize",
+               "--target-min-edge", str(job.options.minimum_target_edge),
+               "--events", "--input-plan", str(plan)]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", JPEGDROP_JOB_ID=job.id)
         with self._condition:
             if job.cancel_requested:

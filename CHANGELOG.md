@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.9.0 — 2026-10-16
+
+- Optional per-file byte limits with bounded quality search and visible progress.
+- Explicit additional resizing with a minimum image edge; lossless presets retain their encoding.
+- Unreachable limits produce a clear error and no oversized output.
+- Complete size-option snapshots, unambiguous decimal/binary units and cancellation cleanup.
+
 ## 2.8.0 — 2026-10-16
 
 - Folder drops with optional recursion and a fixed, bounded input inventory.
