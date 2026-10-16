@@ -1,0 +1,4 @@
+# Verifizierte Versionen (getestet auf Python 3.14, arm64, cp314-Wheels).
+# Beide bringen ihre nativen Libs (inkl. libheif) als Wheel mit -> kein brew nötig.
+pillow==12.2.0
+pi-heif==1.4.0

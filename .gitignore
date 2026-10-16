@@ -1,0 +1,30 @@
+# Pro-Mac-Artefakte, nie committen (per build.sh neu erzeugbar):
+.venv/
+JPEGdrop.app/
+*.app/
+__pycache__/
+.DS_Store
+
+# Arbeitsverzeichnis von build.sh: Dort entsteht das Bundle vollständig, bevor
+# es den endgültigen Platz einnimmt. Nach einem harten Abbruch (SIGKILL) kann
+# eines liegen bleiben — im Repo hat es nichts verloren.
+.jpegdrop-build.*/
+# Vorgaenger-Bundle waehrend des abschliessenden Austauschs. Der EXIT-Trap
+# stellt es zurueck oder entfernt es; nur SIGKILL kann den Ordner liegen lassen.
+.jpegdrop-alt.*/
+
+# Lokaler Schutz gegen zwei gleichzeitige Commit-Schreiber (safe-commit).
+.commit-lock
+
+# Heruntergeladenes Interpreter-Archiv für das App-Bundle (rund 26 MB).
+# build.sh prüft es gegen die dort gepinnte Prüfsumme und lädt es bei Bedarf neu.
+.cache/
+
+# rohe KI-Kandidaten (groß, nur lokal; der gewählte liegt als assets/icon-source-raw.png)
+icon-src/
+
+# Release-Artefakte (DMG + Prüfsumme) von release.sh; pro Version neu erzeugbar.
+dist/
+# Arbeitsordner eines release.sh-Laufs (Payload, RW-Image, Mountpunkt).
+# Der EXIT-Trap räumt ihn weg; nur SIGKILL kann ihn liegen lassen.
+.jpegdrop-release.*/

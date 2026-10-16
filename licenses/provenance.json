@@ -1,0 +1,16 @@
+{
+  "pythonBuildStandalone": {
+    "release": "20260728",
+    "python": "3.14.6",
+    "fullArchiveSHA256": "bff75616d5f02111d2be7fe4786d4b574abcbc3f776c8852527d77a262bdb59b",
+    "metadata": "https://github.com/astral-sh/python-build-standalone/releases/tag/20260728"
+  },
+  "pyobjc": {
+    "version": "12.2",
+    "source": "https://github.com/ronaldoussoren/pyobjc/tree/v12.2"
+  },
+  "zstd": {
+    "version": "1.5.7",
+    "licenseSource": "https://github.com/facebook/zstd/blob/v1.5.7/LICENSE"
+  }
+}

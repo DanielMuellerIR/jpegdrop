@@ -1,0 +1,4 @@
+# Entwicklung einschließlich nativer Cocoa-Controls und Release-Metadaten.
+-r requirements-app.txt
+-r requirements-build.txt
+pytest==9.1.1

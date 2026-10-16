@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>JPEGdrop</string>
+    <key>CFBundleDisplayName</key>
+    <string>JPEGdrop</string>
+    <key>CFBundleIdentifier</key>
+    <string>de.dm0.jpegdrop</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>JPEGdrop</string>
+    <key>CFBundleIconFile</key>
+    <string>applet</string>
+    <!-- Reguläre App MIT Dock-Icon (Dock-Droplet): Bilder aufs Dock-Icon ziehen.
+         Kein LSUIElement mehr -> Doppelklick zeigt ein sichtbares Dock-Icon. -->
+    <!-- Übernimmt die gleichen Dateitypen wie das alte Droplet. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Bilddatei</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.image</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+    </array>
+    <!-- High-Resolution-Modus für Retina-Icon-Rendering. -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>SUFeedURL</key>
+    <string>https://danielmuellerir.github.io/jpegdrop/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>56GB0jYHMAjBI0vVQs9OBcK60GOW4aJh/zXEMvQUOUc=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
+    <key>SUEnableSystemProfiling</key>
+    <false/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <!-- Damit ⌘, die Settings-Show-Action triggert (wir hängen sie selbst
+         ins Menü, das hier ist nur ein Hint für Cocoa). -->
+    <key>NSHumanReadableCopyright</key>
+    <string>JPEGdrop — local-first Bildkompression ohne Metadaten.</string>
+</dict>
+</plist>
