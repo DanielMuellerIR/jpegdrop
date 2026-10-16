@@ -16,6 +16,8 @@ The interface currently uses German labels. The default is **JPEG · hoch**
 12.0 as its minimum; release tests have run on macOS 26.7.1. Execution on macOS
 12 has not yet been verified. See the release notes for the tested systems.
 
+![JPEGdrop settings](assets/settings.png)
+
 ## Files and image handling
 
 Originals are never changed or overwritten. Copies are saved next to them:

@@ -487,6 +487,26 @@ def _stop_instances(prozessliste: str, pfade: list[str]) -> list[str]:
 
 INSTALLIERT = "/Applications/JPEGdrop.app/Contents/Resources/app/menu_app.py"
 IM_REPO = "/Users/x/git/jpegdrop/app/menu_app.py"
+NATIVE_INSTALLIERT = "/Applications/JPEGdrop.app/Contents/MacOS/JPEGdrop"
+
+
+def test_native_app_wird_beendet_aber_fremde_argumente_bleiben_verschont():
+    native_repo = "/Users/x/JPEG drop/JPEGdrop.app/Contents/MacOS/JPEGdrop"
+    liste = "\n".join([
+        f"  510 JPEGdrop {NATIVE_INSTALLIERT}",
+        f"  511 JPEGdrop {native_repo} -psn_0_123",
+        f"  512 vim /usr/bin/vim {NATIVE_INSTALLIERT}",
+        f"  513 JPEGdrop /elsewhere/JPEGdrop {NATIVE_INSTALLIERT}",
+        f"  514 python3 /usr/bin/python3 {NATIVE_INSTALLIERT}",
+        f"  515 JPEGdrop {NATIVE_INSTALLIERT}-other",
+    ])
+    assert _stop_instances(liste, [NATIVE_INSTALLIERT, native_repo]) == ["510", "511"]
+
+
+def test_installer_sucht_native_app_im_bundle_und_repo():
+    paths = _uebergebene_pfade()
+    assert NATIVE_INSTALLIERT in paths
+    assert str(REPO / "JPEGdrop.app/Contents/MacOS/JPEGdrop") in paths
 
 
 def test_installierte_instanz_wird_beendet():

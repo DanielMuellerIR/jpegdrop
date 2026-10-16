@@ -116,9 +116,9 @@ ditto "$APP" "$STAGED"
 #   1. Der Vergleich laeuft ueber ein literales case-Muster statt ueber einen
 #      regulaeren Ausdruck — Sonderzeichen im Repo-Pfad koennen ihn also nicht
 #      verbiegen.
-#   2. Nur Python-Prozesse kommen infrage, und der Pfad muss darin ein
-#      eigenstaendiges Argument sein. Ein Editor, Pager oder grep mit demselben
-#      Pfad als Argument wird dadurch nicht getroffen.
+#   2. Der native Starter muss mit seinem exakten Bundle-Pfad laufen; bei
+#      Python muss der Skriptpfad ein eigenstaendiges Argument sein. Ein Editor
+#      oder ein fremdes Werkzeug mit demselben Pfad wird nicht getroffen.
 #   3. Gesucht wird auch der Pfad der KONVERTIER-CLI (jpegdrop.py). Die
 #      Menueleisten-App startet sie fuer jeden Drop als eigenen Prozess; deren
 #      Argumentliste nennt jpegdrop.py, nicht menu_app.py. Ohne diesen Eintrag
@@ -149,11 +149,8 @@ stop_repo_instances() {
     if [ "$pid" = "$$" ]; then
       continue
     fi
-    # `ucomm` ist der tatsaechliche Prozessname. Erst damit wird aus einem Pfad
-    # in der Argumentliste eine laufende JPEGdrop-Python-Instanz statt etwa ein
-    # Editor, `less`, `git diff` oder `grep` auf derselben Datei.
     case "${executable##*/}" in
-      python|python[0-9]*|Python|Python[0-9]*) ;;
+      JPEGdrop|python|python[0-9]*|Python|Python[0-9]*) ;;
       *) continue ;;
     esac
     for script_path in "$@"; do
@@ -162,12 +159,21 @@ stop_repo_instances() {
       # Pfad als Zeichenfolge erhalten, auch wenn er Leerzeichen enthält. Ein
       # früheres Python-Skript oder -c/-m kennzeichnet dagegen ein fremdes Tool,
       # dem der JPEGdrop-Pfad nur als späteres Argument übergeben wurde.
-      case " $command " in
-        *" $script_path "*)
+      case "${executable##*/}:$script_path" in
+        JPEGdrop:*/Contents/MacOS/JPEGdrop)
+          case "$command " in
+            "$script_path "*) matched=1 ;;
+          esac
+          ;;
+        python*:*.py|Python*:*.py)
+          case " $command " in
+          *" $script_path "*)
           local prefix="${command%%"$script_path"*}"
           case " $prefix " in
             *" -c "*|*" -m "*|*".py "*) matched=0 ;;
             *) matched=1 ;;
+          esac
+          ;;
           esac
           ;;
       esac
@@ -222,8 +228,10 @@ stop_repo_instances() {
   return 1
 }
 stop_repo_instances \
+  "$DESTINATION/Contents/MacOS/JPEGdrop" \
   "$DESTINATION/Contents/Resources/app/menu_app.py" \
   "$DESTINATION/Contents/Resources/jpegdrop.py" \
+  "$PWD/$APP/Contents/MacOS/JPEGdrop" \
   "$PWD/$APP/Contents/Resources/app/menu_app.py" \
   "$PWD/$APP/Contents/Resources/jpegdrop.py" \
   "$PWD/app/menu_app.py" \

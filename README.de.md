@@ -16,6 +16,8 @@ JPEGdrop wird ausschließlich für Apple Silicon gebaut. Das Bundle weist macOS
 12.0 als Mindestversion aus; Release-Tests liefen auf macOS 26.7.1. Die Ausführung
 auf macOS 12 ist noch nicht belegt. Getestete Systeme stehen in den Release Notes.
 
+![JPEGdrop-Einstellungen](assets/settings.png)
+
 ## Dateien und Bildverarbeitung
 
 Originale werden weder verändert noch überschrieben. Die Kopien liegen daneben:

@@ -33,19 +33,20 @@ def write_layout(root: Path, background: Path) -> None:
     readme = "Read Me.txt" if (root / "Read Me.txt").is_file() else "LIESMICH.txt"
     locations = {"JPEGdrop.app": (180, 195), "Applications": (500, 195)}
     if (root / "Licenses").is_dir():
-        locations.update({readme: (280, 365), "Licenses": (400, 365)})
+        locations.update({readme: (280, 375), "Licenses": (400, 375)})
     else:
-        locations[readme] = (340, 365)
+        locations[readme] = (340, 375)
     with DSStore.open(str(root / ".DS_Store"), "w+") as store:
         store["."]["vSrn"] = ("long", 1)
         store["."]["icvl"] = ("type", b"icnv")
-        store["."]["bwsp"] = {"WindowBounds": "{{180, 140}, {680, 488}}", "ShowToolbar": False,
+        store["."]["bwsp"] = {"WindowBounds": "{{180, 140}, {680, 520}}", "ShowToolbar": False,
             "ShowStatusBar": False, "ShowPathbar": False, "ShowSidebar": False, "ShowTabView": False,
             "ContainerShowSidebar": False, "PreviewPaneVisibility": False}
         store["."]["icvp"] = {"viewOptionsVersion": 1, "backgroundType": 2,
+            "backgroundColorRed": 1.0, "backgroundColorGreen": 1.0, "backgroundColorBlue": 1.0,
             "backgroundImageAlias": data, "gridOffsetX": 0.0, "gridOffsetY": 0.0,
             "gridSpacing": 100.0, "arrangeBy": "none", "showIconPreview": True,
-            "showItemInfo": False, "labelOnBottom": True, "textSize": 14.0, "iconSize": 104.0,
+            "showItemInfo": False, "labelOnBottom": True, "textSize": 14.0, "iconSize": 96.0,
             "scrollPositionX": 0.0, "scrollPositionY": 0.0}
         for name, point in locations.items():
             store[name]["Iloc"] = point

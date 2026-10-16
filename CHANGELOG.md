@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.3 — 2026-10-16
+
+- Installation waits for native JPEGdrop processes before exchanging the app.
+- Finder DMG background, icon spacing and document labels render correctly.
+
 ## 2.6.2 — 2026-10-16
 
 - MIT license for JPEGdrop, bundled third-party notices and corresponding HEIF sources.
