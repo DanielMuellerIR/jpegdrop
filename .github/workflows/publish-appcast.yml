@@ -26,9 +26,11 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
           fetch-depth: 0
+          path: release-source
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.14'
@@ -49,9 +51,9 @@ jobs:
           gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body \
             > "$RUNNER_TEMP/jpegdrop/update/JPEGdrop-$version.md"
       - name: Verify notarized DMG, payload and tagged source
-        run: python tools/verify_release_dmg.py --tag "$RELEASE_TAG" --dmg "$RUNNER_TEMP/jpegdrop/update/JPEGdrop-${RELEASE_TAG#v}.dmg"
+        run: python tools/verify_release_dmg.py --repo "$GITHUB_WORKSPACE/release-source" --tag "$RELEASE_TAG" --dmg "$RUNNER_TEMP/jpegdrop/update/JPEGdrop-${RELEASE_TAG#v}.dmg"
       - name: Verify corresponding dependency sources and notices
-        run: python tools/package_sources.py --verify "$RUNNER_TEMP/jpegdrop/sources/JPEGdrop-${RELEASE_TAG#v}-dependency-sources.tar.gz"
+        run: python tools/package_sources.py --repo "$GITHUB_WORKSPACE/release-source" --verify "$RUNNER_TEMP/jpegdrop/sources/JPEGdrop-${RELEASE_TAG#v}-dependency-sources.tar.gz"
       # Laden/Entpacken fremder Werkzeuge erfolgt vor dem Zugriff auf den Schlüssel.
       - name: Prepare pinned signing tools
         run: python tools/create_appcast.py prepare-tools --cache "$RUNNER_TEMP/jpegdrop/cache" --output "$RUNNER_TEMP/jpegdrop/tools"
@@ -62,8 +64,8 @@ jobs:
           python tools/create_appcast.py sign --tools "$RUNNER_TEMP/jpegdrop/tools" \
             --update "$RUNNER_TEMP/jpegdrop/update" --site "$RUNNER_TEMP/jpegdrop/site" \
             --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
-          cp assets/privacy.html "$RUNNER_TEMP/jpegdrop/site/privacy.html"
-          cp assets/update-index.html "$RUNNER_TEMP/jpegdrop/site/index.html"
+          cp release-source/assets/privacy.html "$RUNNER_TEMP/jpegdrop/site/privacy.html"
+          cp release-source/assets/update-index.html "$RUNNER_TEMP/jpegdrop/site/index.html"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           name: github-pages-${{ github.run_attempt }}

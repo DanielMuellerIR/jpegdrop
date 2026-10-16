@@ -18,7 +18,13 @@ from build_manifest import verify_release_source
 
 
 def run(*args):
-    return subprocess.check_output(list(map(str, args)), stderr=subprocess.STDOUT)
+    try:
+        return subprocess.check_output(list(map(str, args)), stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as error:
+        # Diese Werkzeuge lesen ausschließlich das Release und erhalten keine
+        # Zugangsdaten. Ihr konkretes Urteil ist für CI-Abweichungen nötig.
+        detail = error.output.decode('utf-8', errors='replace').strip()[-3000:]
+        raise ValueError(f'{Path(args[0]).name} fehlgeschlagen (Status {error.returncode}): {detail}') from error
 
 
 def mounted_device(info: dict, mount: Path) -> str | None:
@@ -101,7 +107,7 @@ def main():
     try:
         print(json.dumps(verify(args.repo, args.dmg, args.tag)))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
-        parser.exit(2, f'FEHLER: Release-DMG-Prüfung fehlgeschlagen ({type(error).__name__}).\n')
+        parser.exit(2, f'FEHLER: Release-DMG-Prüfung fehlgeschlagen: {error}\n')
 
 
 if __name__ == '__main__':
