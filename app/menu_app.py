@@ -60,6 +60,11 @@ from app.jobs import JobManager
 from app.jobs_window import JobsWindowController
 from app.updates import JDUpdateController
 from app.input_plan import IMAGE_EXTENSIONS, InventoryOptions
+from app.profiles import ProfileStore, active_profile, apply_profile, canonical_options
+from app.profiles_window import ProfilesWindowController
+from app.finder_action import FinderAction
+from app.preview import PreviewManager
+from app.preview_window import PreviewWindowController
 
 
 # Interpreter und Skript für die eigentliche Konvertierung (läuft als eigener
@@ -148,6 +153,11 @@ class SettingsWindowController(NSObject):
         self._target_size = None
         self._target_resize = None
         self._target_minimum = None
+        self._profile_popup = None
+        self._profile_id = None
+        self._profiles = ()
+        self._profile_problem = None
+        self._profiles_controller = None
         # Interne Codec-Namen, Index-gekoppelt zu den Popup-Labels (s. _populate).
         self._codec_names = None
         # Callback des AppDelegate: wird nach erfolgreichem Speichern gerufen,
@@ -156,7 +166,8 @@ class SettingsWindowController(NSObject):
         return self
 
     def show(self):
-        self._populate_from_settings()
+        if self._window is None or not self._window.isVisible():
+            self._populate_from_settings()
         self._window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
@@ -166,6 +177,21 @@ class SettingsWindowController(NSObject):
         if self._window is None:
             self._build_window()
         s = jpegdrop.load_settings()
+        self._set_image_settings(s)
+        updates = self._update_controller
+        available = updates is not None and updates.available
+        self._automatic_checks.setEnabled_(available)
+        self._automatic_checks.setState_(AppKit.NSControlStateValueOn if available and updates.automatic_checks
+                                         else AppKit.NSControlStateValueOff)
+        self._update_info.setStringValue_(
+            "Die Suche lädt den Update-Feed. Installiert wird nach Ihrer Bestätigung, "
+            "sobald alle aktiven Aufträge fertig sind."
+            if available else (updates.problem if updates else "Updates sind nicht verfügbar."))
+        self._window.setContentSize_(self._window.contentView().fittingSize())
+
+    @objc.python_method
+    def _set_image_settings(self, s):
+        self._profile_id = s.get("profile_id")
         # Popup zeigt die Anzeige-Labels ("JPEG", "WebP", …); die internen
         # Namen laufen Index-gekoppelt in self._codec_names mit.
         self._codec_names = list(jpegdrop.CODECS.keys())
@@ -179,7 +205,7 @@ class SettingsWindowController(NSObject):
         self._codec_popup.selectItemAtIndex_(idx)
         # _refresh_presets füllt das Preset-Popup UND wählt das gespeicherte
         # Preset direkt aus — keine zweite Auswahl-Schleife nötig.
-        self._refresh_presets(None)
+        self._refresh_presets(None, preset=s["preset"])
         self._max_edge.setStringValue_(str(s["max_edge"]))
         self._target_size.setStringValue_(str(Decimal(s["target_bytes"]) / 1000).replace(".", ","))
         self._target_resize.setState_(AppKit.NSControlStateValueOn if s["allow_target_resize"] else AppKit.NSControlStateValueOff)
@@ -196,16 +222,7 @@ class SettingsWindowController(NSObject):
         self._output_subdir.setStringValue_(s["output_subdir"])
         self._output_directory_value = s["output_directory"]
         self._refresh_output_options()
-        updates = self._update_controller
-        available = updates is not None and updates.available
-        self._automatic_checks.setEnabled_(available)
-        self._automatic_checks.setState_(AppKit.NSControlStateValueOn if available and updates.automatic_checks
-                                         else AppKit.NSControlStateValueOff)
-        self._update_info.setStringValue_(
-            "Die Suche lädt den Update-Feed. Installiert wird nach Ihrer Bestätigung, "
-            "sobald alle aktiven Aufträge fertig sind."
-            if available else (updates.problem if updates else "Updates sind nicht verfügbar."))
-        self._window.setContentSize_(self._window.contentView().fittingSize())
+        self._refresh_profile_selection()
 
     def _selected_codec_name(self):
         """Interner Codec-Name ("jpeg", …) des gewählten Popup-Eintrags."""
@@ -226,6 +243,15 @@ class SettingsWindowController(NSObject):
         # WICHTIG: sonst gibt AppKit das Fenster beim roten Schließen-Knopf
         # frei und der nächste ⌘,-Aufruf greift auf ein freigegebenes Objekt.
         win.setReleasedWhenClosed_(False)
+        win.setDelegate_(self)
+
+        profile_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(0, 0, 290, 25), False)
+        profile_popup.setAccessibilityLabel_("Profil")
+        profile_popup.widthAnchor().constraintEqualToConstant_(290).setActive_(True)
+        profile_popup.setTarget_(self); profile_popup.setAction_("profileChanged:")
+        manage = NSButton.buttonWithTitle_target_action_("Verwalten…", self, "showProfiles:")
+        profile_row = NSStackView.stackViewWithViews_([NSTextField.labelWithString_("Profil:"), profile_popup, manage])
+        profile_row.setSpacing_(10)
 
         # --- Formular: Labels + Popups sauber ausgerichtet via NSGridView ---
         codec_label = NSTextField.labelWithString_("Ziel-Codec:")
@@ -361,6 +387,7 @@ class SettingsWindowController(NSObject):
         content.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
         content.setAlignment_(AppKit.NSLayoutAttributeLeading)
         content.setSpacing_(16)
+        content.addArrangedSubview_(profile_row)
         content.addArrangedSubview_(grid)
         content.addArrangedSubview_(info)
         content.addArrangedSubview_(image_separator)
@@ -421,17 +448,29 @@ class SettingsWindowController(NSObject):
         self._output_subdir = output_subdir
         self._output_path = output_path
         self._output_choose = choose
+        self._profile_popup = profile_popup
+        preset_popup.setTarget_(self); preset_popup.setAction_("imageOptionsChanged:")
+        background.setTarget_(self); background.setAction_("imageOptionsChanged:")
+        recursive.setTarget_(self); recursive.setAction_("imageOptionsChanged:")
+        for field in (max_edge, target_size, target_minimum, output_subdir):
+            field.setDelegate_(self)
 
     # Objective-C Selectors -------------------------------------------------
     def codecChanged_(self, sender):
         self._refresh_presets(sender)
         self._refresh_image_options()
+        self._refresh_profile_selection()
 
     def imageOptionsChanged_(self, sender):
         self._refresh_image_options()
+        self._refresh_profile_selection()
 
     def targetOptionsChanged_(self, sender):
         self._refresh_target_options()
+        self._refresh_profile_selection()
+
+    def controlTextDidChange_(self, notification):
+        self._refresh_profile_selection()
 
     def _refresh_target_options(self):
         active = self._target_resize.state() == AppKit.NSControlStateValueOn
@@ -443,6 +482,7 @@ class SettingsWindowController(NSObject):
 
     def outputModeChanged_(self, sender):
         self._refresh_output_options()
+        self._refresh_profile_selection()
 
     def _refresh_output_options(self):
         mode = ["beside", "subfolder", "directory"][self._output_mode.indexOfSelectedItem()]
@@ -475,6 +515,7 @@ class SettingsWindowController(NSObject):
             if response == AppKit.NSModalResponseOK and panel.URL() is not None:
                 self._output_directory_value = str(panel.URL().path())
                 self._refresh_output_options()
+                self._refresh_profile_selection()
             self._folder_panel = None
 
         panel.beginSheetModalForWindow_completionHandler_(self._window, completed)
@@ -492,25 +533,28 @@ class SettingsWindowController(NSObject):
         self._image_info.setStringValue_(alpha_info + " Größenlimits senken die Qualität bis q15; verlustfreie Presets bleiben verlustfrei.")
         self._window.setContentSize_(self._window.contentView().fittingSize())
 
-    def _refresh_presets(self, _sender):
+    @objc.python_method
+    def _refresh_presets(self, _sender, preset=None):
         codec_name = self._selected_codec_name()
         if not codec_name:
             return
         codec = jpegdrop.CODECS.get(codec_name)
         if not codec:
             return
+        if preset is None and self._preset_popup.titleOfSelectedItem():
+            preset = self._preset_popup.titleOfSelectedItem().split(" — ", 1)[0]
         # Preset-Popup füllen mit "name — label"
         self._preset_popup.removeAllItems()
         for p in codec.presets:
             self._preset_popup.addItemWithTitle_(f"{p.name} — {p.label}")
             self._preset_popup.lastItem().setToolTip_(p.description)
-        # Gespeichertes Preset beibehalten, sonst den Standard des neuen Codecs wählen.
-        s = jpegdrop.load_settings()
+        # Den aktuellen Formularwert beibehalten, soweit der neue Codec ihn kennt.
         names = [p.name for p in codec.presets]
-        target_preset = s["preset"] if s["preset"] in names else codec.default_preset
+        target_preset = preset if preset in names else codec.default_preset
         self._preset_popup.selectItemAtIndex_(names.index(target_preset))
 
-    def saveAndClose_(self, _sender):
+    @objc.python_method
+    def _form_settings(self):
         codec_name = self._selected_codec_name()
         preset_title = self._preset_popup.titleOfSelectedItem()
         if codec_name and preset_title:
@@ -537,18 +581,77 @@ class SettingsWindowController(NSObject):
                     output_directory=self._output_directory_value,
                     output_subdir=self._output_subdir.stringValue().strip(),
                 )
-                jpegdrop.save_settings({"codec": codec_name, "preset": preset_name,
+                values = {"codec": codec_name, "preset": preset_name,
                     "max_edge": options.max_edge, "preserve_alpha": options.preserve_alpha,
                     "background": options.background, "recursive": inventory.recursive,
                     "target_bytes": options.target_bytes, "allow_target_resize": options.allow_target_resize,
                     "minimum_target_edge": options.minimum_target_edge,
                     "output_mode": inventory.output_mode, "output_directory": inventory.output_directory,
-                    "output_subdir": inventory.output_subdir})
+                    "output_subdir": inventory.output_subdir}
+                canonical_options(values)
+                if self._profile_id:
+                    values["profile_id"] = self._profile_id
+                return values
             except (ValueError, OSError) as error:
-                self._validation_error.setStringValue_(str(error))
-                self._validation_error.setHidden_(False)
-                self._window.setContentSize_(self._window.contentView().fittingSize())
-                return
+                raise ValueError(str(error)) from error
+        raise ValueError("Bitte Codec und Preset wählen.")
+
+    @objc.python_method
+    def _show_error(self, error):
+        self._validation_error.setStringValue_(str(error))
+        self._validation_error.setHidden_(False)
+        self._window.setContentSize_(self._window.contentView().fittingSize())
+
+    @objc.python_method
+    def _refresh_profile_selection(self):
+        if self._profile_popup is None:
+            return
+        try:
+            self._profiles = ProfileStore().list()
+            self._profile_problem = None
+        except (ValueError, OSError) as error:
+            self._profiles = ()
+            self._profile_problem = str(error)
+        try:
+            active = active_profile(self._form_settings(), self._profiles)
+        except ValueError:
+            active = None
+        self._profile_popup.removeAllItems()
+        self._profile_popup.addItemWithTitle_("Profile nicht verfügbar" if self._profile_problem else "Benutzerdefiniert")
+        for profile in self._profiles:
+            self._profile_popup.addItemWithTitle_(f"„{profile.name}“")
+            self._profile_popup.lastItem().setToolTip_(profile.name)
+        self._profile_popup.selectItemAtIndex_(self._profiles.index(active) + 1 if active else 0)
+        self._profile_popup.setToolTip_(self._profile_problem or "Profilwahl gilt nach Speichern. Abbrechen verwirft die Formularänderungen.")
+
+    def profileChanged_(self, sender):
+        index = self._profile_popup.indexOfSelectedItem() - 1
+        if 0 <= index < len(self._profiles):
+            selected = self._profiles[index]
+            try:
+                current = next((profile for profile in ProfileStore().list() if profile.id == selected.id), None)
+                if current != selected:
+                    raise ValueError("Das Profil wurde inzwischen geändert; bitte erneut wählen.")
+                self._set_image_settings(apply_profile({}, current))
+            except (ValueError, OSError) as error:
+                self._show_error(error)
+                self._refresh_profile_selection()
+        else:
+            self._profile_id = None
+
+    def showProfiles_(self, sender):
+        if self._profiles_controller is None:
+            self._profiles_controller = ProfilesWindowController.alloc().init()
+            self._profiles_controller.owner = self
+        self._profiles_controller.show()
+
+    def saveAndClose_(self, _sender):
+        try:
+            jpegdrop.save_settings(self._form_settings())
+        except (ValueError, OSError) as error:
+            self._show_error(error)
+            return
+        else:
             if self._update_controller is not None:
                 self._update_controller.set_automatic_checks(
                     self._automatic_checks.state() == AppKit.NSControlStateValueOn)
@@ -557,9 +660,17 @@ class SettingsWindowController(NSObject):
             if self._on_saved is not None:
                 self._on_saved()
         self._window.orderOut_(None)
+        if self._profiles_controller is not None:
+            self._profiles_controller.hide()
 
     def close_(self, _sender):
+        if self._profiles_controller is not None:
+            self._profiles_controller.hide()
         self._window.orderOut_(None)
+
+    def windowWillClose_(self, notification):
+        if self._profiles_controller is not None:
+            self._profiles_controller.hide()
 
 
 # ===========================================================================
@@ -573,8 +684,12 @@ class AppDelegate(NSObject):
         if self is None:
             return None
         self._status_item = None
+        self._status_menu_item = None
         self._settings_controller = None
         self._jobs_controller = None
+        self._preview_controller = None
+        self._preview = None
+        self._preview_paused = False
         self._jobs = JobManager(VENV_PY, JPEGDROP_SCRIPT)
         self._jobs_revision = -1
         self._notified_jobs = set()
@@ -582,6 +697,8 @@ class AppDelegate(NSObject):
         self._external_stop = False
         self._stop_scheduled = False
         self._quit_dialog_open = False
+        self._profile_menus = []
+        self._menu_profiles = {}
         self._updates = JDUpdateController.alloc().init()
         self._updates.can_relaunch = lambda: not self._quit_dialog_open and not self._terminating
         self._updates.on_postponed = lambda: show_notification(
@@ -607,7 +724,7 @@ class AppDelegate(NSObject):
         runloop.addTimer_forMode_(self._jobs_timer, AppKit.NSModalPanelRunLoopMode)
         signal.signal(signal.SIGTERM, self._stop_signal)
         signal.signal(signal.SIGINT, self._stop_signal)
-        self._updates.configure(self._jobs)
+        self._updates.configure(self)
         _dbg("didFinishLaunching fertig")
 
     def _make_settings_controller(self):
@@ -621,6 +738,7 @@ class AppDelegate(NSObject):
         self._refresh_codec_submenu()
         self._refresh_preset_submenu()
         self._status_menu_item.setTitle_(self._current_status_text())
+        self._refresh_profile_menus()
 
     def _build_main_menu(self):
         """Echtes Hauptmenü (Menüleiste, wenn die App aktiv ist).
@@ -639,6 +757,9 @@ class AppDelegate(NSObject):
         jobs = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Aufträge…", "showJobs:", "0")
         jobs.setTarget_(self)
         app_menu.addItem_(jobs)
+        self._add_preview_item(app_menu)
+        self._add_profile_item(app_menu)
+        self._add_finder_items(app_menu)
         update = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Nach Updates suchen…", "checkForUpdates:", "")
         update.setTarget_(self._updates)
         app_menu.addItem_(update)
@@ -657,6 +778,12 @@ class AppDelegate(NSObject):
 
         app_item.setSubmenu_(app_menu)
         main_menu.addItem_(app_item)
+        edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Bearbeiten", None, "")
+        edit_menu = NSMenu.alloc().initWithTitle_("Bearbeiten")
+        for title, action, key in (("Ausschneiden", "cut:", "x"), ("Kopieren", "copy:", "c"),
+                                   ("Einsetzen", "paste:", "v"), ("Alles auswählen", "selectAll:", "a")):
+            edit_menu.addItem_(NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, key))
+        edit_item.setSubmenu_(edit_menu); main_menu.addItem_(edit_item)
         NSApp.setMainMenu_(main_menu)
         # Der direkte Entwicklerstart kann noch den Python-Prozessnamen zeigen.
         app_menu.setTitle_("JPEGdrop")
@@ -690,6 +817,8 @@ class AppDelegate(NSObject):
         btn.setTitle_("JD")
 
         menu = NSMenu.alloc().init()
+        menu.setDelegate_(self)
+        self._add_profile_item(menu)
 
         # Helper: NSMenuItem mit Action. PyObjC 10 braucht einen Selector.
         # Wir bauen ihn aus der gebundenen Methode. Methodennamen mit
@@ -740,6 +869,8 @@ class AppDelegate(NSObject):
         prefs_item = menu_item("Einstellungen…", "showSettings", ",")
         menu.addItem_(prefs_item)
         menu.addItem_(menu_item("Aufträge…", "showJobs", "0"))
+        self._add_preview_item(menu)
+        self._add_finder_items(menu)
         update = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Nach Updates suchen…", "checkForUpdates:", "")
         update.setTarget_(self._updates)
         menu.addItem_(update)
@@ -766,7 +897,95 @@ class AppDelegate(NSObject):
         s = jpegdrop.load_settings()
         codec = jpegdrop.CODECS.get(s["codec"])
         codec_label = codec.label if codec else s["codec"]
-        return f"Aktiv: {codec_label} · {s['preset']}"
+        try:
+            active = active_profile(s, ProfileStore().list())
+            name = f"Profil „{active.name}“" if active else "Benutzerdefiniert"
+        except (ValueError, OSError):
+            name = "Profile nicht verfügbar"
+        return f"Aktiv: {name} · {codec_label} · {s['preset']}"
+
+    @objc.python_method
+    def _add_profile_item(self, menu):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Profil", None, "")
+        submenu = NSMenu.alloc().initWithTitle_("Profil")
+        submenu.setDelegate_(self)
+        self._profile_menus.append(submenu)
+        item.setSubmenu_(submenu); menu.addItem_(item)
+        self._refresh_profile_menus()
+
+    def _refresh_profile_menus(self):
+        settings = jpegdrop.load_settings()
+        try:
+            profiles = ProfileStore().list()
+            active = active_profile(settings, profiles)
+            problem = None
+        except (ValueError, OSError) as error:
+            profiles, active, problem = (), None, str(error)
+        self._menu_profiles = {profile.id: profile for profile in profiles}
+        for menu in self._profile_menus:
+            menu.removeAllItems()
+            custom = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Profile nicht verfügbar" if problem else "Benutzerdefiniert", None, "")
+            custom.setState_(0 if active else 1); custom.setEnabled_(False)
+            if problem:
+                custom.setToolTip_(problem)
+            menu.addItem_(custom)
+            for profile in profiles:
+                item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(f"„{profile.name}“", "setProfile:", "")
+                item.setTarget_(self); item.setRepresentedObject_(profile.id)
+                item.setState_(1 if profile == active else 0)
+                menu.addItem_(item)
+            menu.addItem_(NSMenuItem.separatorItem())
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Profile verwalten…", "showProfiles:", "")
+            item.setTarget_(self); menu.addItem_(item)
+
+    def menuNeedsUpdate_(self, menu):
+        if menu in self._profile_menus:
+            self._refresh_profile_menus()
+        elif self._status_menu_item is not None:
+            self._status_menu_item.setTitle_(self._current_status_text())
+
+    @objc.python_method
+    def _add_finder_items(self, menu):
+        for title, action in (("Finder-Schnellaktion einrichten…", "installFinderAction:"),
+                              ("Finder-Schnellaktion entfernen…", "removeFinderAction:")):
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
+            item.setTarget_(self); menu.addItem_(item)
+
+    @objc.python_method
+    def _alert(self, title, text):
+        alert = AppKit.NSAlert.alloc().init()
+        alert.setMessageText_(title); alert.setInformativeText_(text)
+        alert.addButtonWithTitle_("OK"); alert.runModal()
+
+    def installFinderAction_(self, sender):
+        try:
+            message = FinderAction().install()
+        except (ValueError, OSError) as error:
+            message = str(error)
+        self._alert("Finder-Schnellaktion", message)
+
+    def removeFinderAction_(self, sender):
+        try:
+            message = FinderAction().remove()
+        except (ValueError, OSError) as error:
+            message = str(error)
+        self._alert("Finder-Schnellaktion", message)
+
+    def setProfile_(self, sender):
+        identifier = sender.representedObject()
+        try:
+            profile = next((p for p in ProfileStore().list() if p.id == identifier), None)
+            if profile is None or profile != self._menu_profiles.get(identifier):
+                raise ValueError("Das Profil wurde inzwischen geändert; bitte erneut wählen.")
+            jpegdrop.save_settings(apply_profile(jpegdrop.load_settings(), profile))
+            self._settings_saved()
+        except (ValueError, OSError) as error:
+            self._alert("Profil konnte nicht angewandt werden", str(error))
+
+    def showProfiles_(self, sender):
+        self.showSettings_(sender)
+        self._settings_controller.showProfiles_(sender)
 
     def _refresh_preset_submenu(self):
         s = jpegdrop.load_settings()
@@ -811,6 +1030,7 @@ class AppDelegate(NSObject):
         self._refresh_codec_submenu()
         self._refresh_preset_submenu()
         self._status_menu_item.setTitle_(self._current_status_text())
+        self._refresh_profile_menus()
 
     def setPreset_(self, sender):
         preset_name = sender.representedObject()
@@ -821,6 +1041,7 @@ class AppDelegate(NSObject):
         jpegdrop.save_settings(s)
         self._refresh_preset_submenu()
         self._status_menu_item.setTitle_(self._current_status_text())
+        self._refresh_profile_menus()
 
     def showSettings_(self, _sender):
         if self._settings_controller is None:
@@ -833,9 +1054,40 @@ class AppDelegate(NSObject):
             self._jobs_controller.manager = self._jobs
         self._jobs_controller.show()
 
+    @objc.python_method
+    def _add_preview_item(self, menu):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Vergleichsvorschau…", "showPreview:", "")
+        item.setTarget_(self)
+        menu.addItem_(item)
+
+    def showPreview_(self, sender):
+        if self._preview_paused or self._terminating:
+            self._alert("Vorschau nicht verfügbar", "JPEGdrop bereitet ein Update vor oder wird beendet.")
+            return
+        if self._preview is None:
+            self._preview = PreviewManager(VENV_PY)
+            self._preview_controller = PreviewWindowController.alloc().init()
+            self._preview_controller.owner = self
+            self._preview_controller.manager = self._preview
+        self._preview_controller.show()
+
     @property
     def has_active_jobs(self):
-        return self._jobs.has_active_jobs
+        return self._jobs.has_active_jobs or bool(self._preview and self._preview.has_active_jobs)
+
+    @objc.python_method
+    def prepare_for_update(self):
+        self._preview_paused = True
+        preview_ready = self._preview.prepare_for_update() if self._preview else True
+        jobs_ready = self._jobs.prepare_for_update()
+        return preview_ready and jobs_ready
+
+    @objc.python_method
+    def resume_after_update(self):
+        self._preview_paused = False
+        self._jobs.resume_after_update()
+        if self._preview:
+            self._preview.resume_after_update()
 
     @objc.python_method
     def _stop_signal(self, _signum, _frame):
@@ -848,12 +1100,16 @@ class AppDelegate(NSObject):
             if not self._stop_scheduled:
                 self._stop_scheduled = True
                 self._jobs.shutdown(wait=False)
+                if self._preview:
+                    self._preview.shutdown(wait=False)
                 # terminate: kann selbst einen modalen Runloop starten. Der
                 # Jobs-Timer muss dafür zuerst seinen Callback verlassen.
                 NSApp.performSelector_withObject_afterDelay_("terminate:", None, 0.0)
             return
         if not self._terminating:
             self._updates.poll()
+            if self._preview_controller:
+                self._preview_controller.poll()
         revision, jobs = self._jobs.snapshot(after_revision=self._jobs_revision)
         if revision != self._jobs_revision:
             self._jobs_revision = revision
@@ -875,7 +1131,7 @@ class AppDelegate(NSObject):
                                       subtitle={"cancelled": "abgebrochen", "partial": "Teilerfolg",
                                                 "failed": "Fehler", "completed": "fertig"}[job.state])
             self._notified_jobs.intersection_update(j.id for j in jobs)
-        if self._terminating and self._jobs.stopped:
+        if self._terminating and self._jobs.stopped and (self._preview is None or self._preview.stopped):
             self._jobs_timer.invalidate()
             NSApp.replyToApplicationShouldTerminate_(True)
 
@@ -903,8 +1159,12 @@ class AppDelegate(NSObject):
         if self.has_active_jobs:
             self._terminating = True
             self._jobs.shutdown(wait=False)
+            if self._preview:
+                self._preview.shutdown(wait=False)
             return AppKit.NSTerminateLater
         self._jobs.shutdown()
+        if self._preview:
+            self._preview.shutdown()
         return AppKit.NSTerminateNow
 
     def quit_(self, _sender):
@@ -916,6 +1176,21 @@ class AppDelegate(NSObject):
         Öffnen frisch gebaut und spiegelt die aktuellen Settings (Häkchen)."""
         s = jpegdrop.load_settings()
         menu = NSMenu.alloc().init()
+
+        # Das Dock-Menü lebt nur für diesen Aufruf; keine alten Menüs festhalten.
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Profil", None, "")
+        submenu = NSMenu.alloc().init()
+        try:
+            profiles = ProfileStore().list()
+            active = active_profile(s, profiles)
+            self._menu_profiles.update({profile.id: profile for profile in profiles})
+        except (ValueError, OSError):
+            profiles, active = (), None
+        for profile in profiles:
+            entry = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(f"„{profile.name}“", "setProfile:", "")
+            entry.setTarget_(self); entry.setRepresentedObject_(profile.id)
+            entry.setState_(1 if profile == active else 0); submenu.addItem_(entry)
+        item.setSubmenu_(submenu); menu.addItem_(item)
 
         codec_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Codec", None, "")
         codec_sub = NSMenu.alloc().init()
@@ -953,6 +1228,7 @@ class AppDelegate(NSObject):
         jobs = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Aufträge…", "showJobs:", "")
         jobs.setTarget_(self)
         menu.addItem_(jobs)
+        self._add_preview_item(menu)
         return menu
 
     # Drop-Handling --------------------------------------------------------
@@ -1004,7 +1280,12 @@ class AppDelegate(NSObject):
         try:
             skipped = {p: "Datei fehlt oder das Format wird vom Droplet nicht unterstützt."
                        for p in paths if p not in real}
-            self._jobs.submit(real, jpegdrop.load_settings(), skipped=skipped)
+            settings = jpegdrop.load_settings()
+            try:
+                profile = active_profile(settings, ProfileStore().list())
+            except (ValueError, OSError):
+                profile = None
+            self._jobs.submit(real, settings, skipped=skipped, profile_name=profile.name if profile else None)
         except ValueError as exc:
             show_notification("JPEGdrop", str(exc), success=False)
 

@@ -58,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
                             inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.9.0"
+__version__ = "2.11.0"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -1104,6 +1104,10 @@ def validated_settings(data: dict) -> dict:
     if isinstance(mode, str) and mode in {"beside", "subfolder", "directory"}:
         if mode != "directory" or settings["output_directory"]:
             settings["output_mode"] = mode
+    identifier = data.get("profile_id")
+    if (isinstance(identifier, str) and len(identifier) == 32
+            and all(char in "0123456789abcdef" for char in identifier)):
+        settings["profile_id"] = identifier
     return settings
 
 
@@ -1122,13 +1126,16 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     """Schreibt Settings. Legt das Verzeichnis an falls nötig."""
-    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-    # Atomar schreiben: erst .tmp, dann rename
-    # codereview-ok: SETTINGS_PATH konstant, .tmp im selben Verzeichnis, os.replace atomar (2026-07-01)
-    tmp = SETTINGS_PATH.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(validated_settings(settings), f, ensure_ascii=False, indent=2)
-    os.replace(tmp, SETTINGS_PATH)
+    SETTINGS_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".settings-", dir=SETTINGS_DIR)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            json.dump(validated_settings(settings), target, ensure_ascii=False, indent=2)
+            target.flush(); os.fsync(target.fileno())
+        os.replace(temporary, SETTINGS_PATH)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 # ===========================================================================
@@ -1142,6 +1149,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"jpegdrop {__version__}")
     parser.add_argument("paths", nargs="*", help="Bilddateien (HEIC/PNG/JPG/TIFF/WEBP/AVIF ...)")
     parser.add_argument("--input-plan", type=Path, help="JSON-Eingabeplan mit absoluten source/output_directory-Pfaden; ersetzt Positionsargumente.")
+    parser.add_argument("--profile", metavar="NAME", help="Benanntes Profil als Basis; explizite Bild-/Ablageflags haben Vorrang.")
+    parser.add_argument("--list-profiles", action="store_true", help="Profilnamen auflisten (mit --json einschließlich Optionen).")
+    finder = parser.add_mutually_exclusive_group()
+    finder.add_argument("--install-finder-action", action="store_true", help="Finder-Schnellaktion für die notarisiert installierte App einrichten.")
+    finder.add_argument("--remove-finder-action", action="store_true", help="Unveränderte eigene Finder-Schnellaktion entfernen.")
     recursion = parser.add_mutually_exclusive_group()
     recursion.add_argument("--recursive", dest="recursive", action="store_true", default=None,
                            help="Unterordner in Ordner-Eingaben einbeziehen.")
@@ -1234,11 +1246,41 @@ def main(argv: list[str] | None = None) -> int:
         print(SETTINGS_PATH)
         return 0
 
+    if args.install_finder_action or args.remove_finder_action:
+        if args.paths or args.input_plan or args.profile or args.list_profiles:
+            parser.error("Finder-Einrichtung ist nicht mit Konvertierung oder Profilwahl kombinierbar.")
+        from app.finder_action import FinderAction
+        try:
+            action = FinderAction()
+            print(action.install() if args.install_finder_action else action.remove())
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+        return 0
+
+    if args.list_profiles:
+        from app.profiles import ProfileStore
+        try:
+            profiles = ProfileStore().list()
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+        if args.json:
+            print(json.dumps([{"id": profile.id, "name": profile.name, "options": profile.settings()}
+                              for profile in profiles], ensure_ascii=False, indent=2))
+        else:
+            print("\n".join(profile.name for profile in profiles))
+        return 0
+
     if not args.paths and not args.input_plan:
         parser.error("Keine Bilddateien angegeben. Tipp: --list-presets zeigt die Optionen.")
 
     # Settings laden, Defaults drüberlegen
     settings = load_settings()
+    if args.profile is not None:
+        from app.profiles import ProfileStore, apply_profile
+        try:
+            settings = apply_profile(settings, ProfileStore().by_name(args.profile))
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
 
     # --quality (Legacy) hat Vorrang und erzwingt JPEG + Auto-Preset.
     if args.quality is not None:

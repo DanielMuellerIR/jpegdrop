@@ -46,6 +46,7 @@ class Job:
     publishing: bool = False
     optimization: str | None = None
     skipped: list[dict] = field(default_factory=list)
+    profile_name: str | None = None
 
     @property
     def active(self) -> bool:
@@ -103,7 +104,8 @@ class JobManager:
         with self._condition:
             return self._revision, (None if after_revision == self._revision else copy.deepcopy(self._jobs))
 
-    def submit(self, paths: list[str], settings: dict, *, skipped: dict[str, str] | None = None) -> str:
+    def submit(self, paths: list[str], settings: dict, *, skipped: dict[str, str] | None = None,
+               profile_name: str | None = None) -> str:
         if not paths:
             raise ValueError("Der Auftrag enthält keine Dateien.")
         codec = jpegdrop.get_codec(settings["codec"])
@@ -121,7 +123,8 @@ class JobManager:
                 raise ValueError(f"Die Warteschlange ist voll ({self.max_active} aktive Aufträge).")
             self._number += 1
             job = Job(uuid.uuid4().hex, self._number, tuple(os.path.abspath(p) for p in paths),
-                      codec.name, preset.name, options=options, inventory_options=inventory_options)
+                      codec.name, preset.name, options=options, inventory_options=inventory_options,
+                      profile_name=profile_name)
             job.input_paths = job.paths
             for path, reason in (skipped or {}).items():
                 result = jpegdrop.empty_result(Path(os.path.abspath(path)), codec.name, preset.name, target_bytes=options.target_bytes)

@@ -140,6 +140,135 @@ class SettingsWindowTests(unittest.TestCase):
             finally:
                 controller._window.close()
 
+class ProfileWindowTests(unittest.TestCase):
+    def setUp(self):
+        A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyProhibited)
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.patches = [patch.object(jpegdrop, 'SETTINGS_DIR', self.root),
+                        patch.object(jpegdrop, 'SETTINGS_PATH', self.root / 'settings.json')]
+        for item in self.patches:
+            item.start()
+        jpegdrop.save_settings(jpegdrop.DEFAULT_SETTINGS)
+        self.controller = SettingsWindowController.alloc().init()
+        self.controller._populate_from_settings()
+
+    def tearDown(self):
+        if self.controller._profiles_controller:
+            self.controller._profiles_controller._window.close()
+        self.controller._window.close()
+        for item in reversed(self.patches):
+            item.stop()
+        self.directory.cleanup()
+
+    def test_profile_selection_cancel_save_and_custom_indicator(self):
+        controller = self.controller
+        original = jpegdrop.SETTINGS_PATH.read_bytes()
+        controller._profile_popup.selectItemAtIndex_(1); controller.profileChanged_(None)
+        self.assertEqual(controller._max_edge.stringValue(), '1600')
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Mail“')
+        self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(), original)
+        controller.close_(None); controller._populate_from_settings()
+        self.assertEqual(controller._max_edge.stringValue(), '0')
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), 'Benutzerdefiniert')
+        controller._profile_popup.selectItemAtIndex_(3); controller.profileChanged_(None)
+        controller.saveAndClose_(None); controller._populate_from_settings()
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Screenshots“')
+        controller._max_edge.setStringValue_('300'); controller.controlTextDidChange_(None)
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), 'Benutzerdefiniert')
+        controller._max_edge.setStringValue_('0'); controller.controlTextDidChange_(None)
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Screenshots“')
+
+    def test_crud_uses_unsaved_form_but_never_saves_other_settings(self):
+        from app.profiles import ProfileStore
+        from app.profiles_window import ProfilesWindowController
+        controller = self.controller
+        original = jpegdrop.SETTINGS_PATH.read_bytes()
+        controller._max_edge.setStringValue_('777')
+        controller._automatic_checks.setState_(A.NSControlStateValueOff)
+        manager = ProfilesWindowController.alloc().init(); manager.owner = controller
+        controller._profiles_controller = manager
+        manager._build(); manager.reload_(None)
+        manager._name.setStringValue_(' Café / „--x“ '); manager.create_(None)
+        created = ProfileStore().by_name('Café / „--x“')
+        self.assertEqual(created.settings()['max_edge'], 777)
+        self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(), original)
+        manager._name.setStringValue_('Renamed'); manager.rename_(None)
+        renamed = ProfileStore().by_name('Renamed')
+        self.assertEqual(renamed.id, created.id)
+        controller._max_edge.setStringValue_('999')
+        with patch.object(manager, '_confirm', return_value=True):
+            manager.update_(None)
+        self.assertEqual(ProfileStore().by_name('Renamed').settings()['max_edge'], 999)
+        manager.apply_(None)
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Renamed“')
+        self.assertEqual(controller._automatic_checks.state(), A.NSControlStateValueOff)
+        self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(), original)
+        with patch.object(manager, '_confirm', return_value=True):
+            manager.delete_(None)
+        self.assertEqual(controller._max_edge.stringValue(), '999')
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), 'Benutzerdefiniert')
+        self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(), original)
+
+    def test_bad_library_and_stale_editor_preserve_library_and_form(self):
+        from app.profiles import ProfileStore
+        from app.profiles_window import ProfilesWindowController
+        controller = self.controller
+        manager = ProfilesWindowController.alloc().init(); manager.owner = controller
+        controller._profiles_controller = manager; manager._build(); manager.reload_(None)
+        manager._name.setStringValue_('Concurrent'); manager.create_(None)
+        selected = manager._selected()
+        ProfileStore().update(selected.id, name='Other writer')
+        before = (self.root / 'profiles.json').read_bytes()
+        manager._name.setStringValue_('Stale'); manager.rename_(None)
+        self.assertFalse(manager._error.isHidden())
+        self.assertEqual((self.root / 'profiles.json').read_bytes(), before)
+        (self.root / 'profiles.json').write_bytes(b'{broken')
+        controller._max_edge.setStringValue_('888'); controller.controlTextDidChange_(None)
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), 'Profile nicht verfügbar')
+        manager.create_(None)
+        self.assertEqual((self.root / 'profiles.json').read_bytes(), b'{broken')
+        controller.saveAndClose_(None)
+        self.assertEqual(jpegdrop.load_settings()['max_edge'], 888)
+
+    def test_direct_menu_application_preserves_open_draft_and_snapshots_active_name(self):
+        import app.menu_app as menu
+        from app.profiles import ProfileStore
+        app = A.NSApplication.sharedApplication()
+        with patch.object(menu, 'NSApp', app):
+            delegate = menu.AppDelegate.alloc().init()
+            try:
+                delegate._build_main_menu(); delegate._build_status_item()
+                controller = self.controller
+                controller._max_edge.setStringValue_('321')
+                profile = ProfileStore().list()[0]
+                item = A.NSMenuItem.alloc().init()
+                item.setRepresentedObject_(profile.id)
+                delegate.setProfile_(item)
+                self.assertEqual(jpegdrop.load_settings()['profile_id'], profile.id)
+                self.assertEqual(controller._max_edge.stringValue(), '321')
+                self.assertIn('Mail', delegate._current_status_text())
+                ProfileStore().update(profile.id, name='Renamed')
+                self.assertIn('Renamed', delegate._current_status_text())
+                delegate._refresh_profile_menus()
+                self.assertEqual(delegate._profile_menus[0].itemAtIndex_(1).title(), '„Renamed“')
+            finally:
+                delegate._jobs.shutdown()
+                A.NSStatusBar.systemStatusBar().removeStatusItem_(delegate._status_item)
+
+    def test_profile_named_like_status_is_distinct_and_selectable(self):
+        from app.profiles import ProfileStore
+        profile = ProfileStore().create('Benutzerdefiniert', {'codec':'png','max_edge':123})
+        controller = self.controller; controller._refresh_profile_selection()
+        controller._profile_popup.selectItemAtIndex_(len(controller._profiles)); controller.profileChanged_(None)
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Benutzerdefiniert“')
+        self.assertEqual(controller._form_settings()['profile_id'], profile.id)
+        controller.saveAndClose_(None); controller._populate_from_settings()
+        self.assertEqual(controller._max_edge.stringValue(), '123')
+        self.assertEqual(controller._profile_popup.titleOfSelectedItem(), '„Benutzerdefiniert“')
+        controller._profile_popup.selectItemAtIndex_(0); controller.profileChanged_(None)
+        self.assertNotIn('profile_id', controller._form_settings())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -211,6 +211,8 @@ class JobsWindowController(F.NSObject):
             text += result_detail(result)
         if job and job.problem:
             text += f"\nAuftrag: {job.problem}"
+        if job:
+            text = f"Profil: {job.profile_name or 'Benutzerdefiniert'}\n" + text
         self._detail.setString_(text)
 
     def numberOfRowsInTableView_(self, table):

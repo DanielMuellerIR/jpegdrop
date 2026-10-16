@@ -234,12 +234,17 @@ raise SystemExit(jpegdrop.main())
         self.assertEqual(invalid.returncode, 2)
 
     def test_queue_is_serial_and_settings_are_snapshots(self):
+        from app.profiles import ProfileStore, apply_profile
         first, second = self.image("first.png"), self.image("second.png")
         manager = self.manager(self.blocked_wrapper(), max_active=2)
-        settings = dict(SETTINGS)
-        first_id = manager.submit([str(first), str(second)], settings)
+        store = ProfileStore(self.root / 'profiles.json')
+        profile = store.create('Snapshot', SETTINGS)
+        settings = apply_profile(dict(SETTINGS), profile)
+        first_id = manager.submit([str(first), str(second)], settings, profile_name=profile.name)
         wait_for(lambda: (self.root / "encoder-pid").exists())
-        second_id = manager.submit([str(first)], settings)
+        second_id = manager.submit([str(first)], settings, profile_name=profile.name)
+        store.update(profile.id, name='Changed', options={'codec': 'png'})
+        store.delete(profile.id)
         settings.update(codec="png", preset="verlustfrei")
         with self.assertRaisesRegex(ValueError, "voll"):
             manager.submit([str(first)], settings)
@@ -254,6 +259,7 @@ raise SystemExit(jpegdrop.main())
         jobs = manager.snapshot()[1]
         self.assertEqual([j.id for j in jobs], [first_id, second_id])
         self.assertEqual([j.codec for j in jobs], ["jpeg", "jpeg"])
+        self.assertEqual([j.profile_name for j in jobs], ['Snapshot', 'Snapshot'])
         self.assertTrue(all(j.state == "completed" for j in jobs))
         self.assertEqual(len({p for j in jobs for p in j.targets}), 3)
         jobs[0].results[0]["target"] = "outside mutation"

@@ -8,7 +8,7 @@ JPEGdrop converts images dropped onto its macOS Dock icon into smaller, metadata
 
 1. Download the DMG from [Releases](https://github.com/danielmuellerir/jpegdrop/releases).
 2. Drag JPEGdrop to Applications and open it. Python and Homebrew are not required.
-3. Choose a codec and preset from the **JD** menu or **Einstellungen…** (⌘,).
+3. Choose a profile, or codec and preset, from the **JD** menu or **Einstellungen…** (⌘,).
 4. Drop images or folders onto the app's Dock or Finder icon.
 
 The interface currently uses German labels. The default is **JPEG · hoch**
@@ -90,6 +90,82 @@ same prepared pixels. The search can be cancelled and reports its progress.
 If no allowed candidate fits, JPEGdrop reports `target_size_unreachable` and
 creates no output. It never silently publishes a file above the limit.
 
+## Named profiles
+
+Profiles contain all image and output options, including folder recursion. Update
+preferences are global. Existing settings keep their values and initially appear
+as **Benutzerdefiniert** (custom). The editable starter profiles are:
+
+| Profile | Options |
+|---|---|
+| Mail | JPEG q85, at most 1600 px and 500,000 bytes; the limit may reduce quality to q15, with no additional resizing |
+| Website-Fotos | WebP q75, at most 2000 px, no byte limit |
+| Screenshots | Lossless PNG encoding, original dimensions, transparency preserved |
+
+All starters output beside the source and leave recursion off. They never enlarge
+images. Mail reports an error without publishing an oversized file if its limit
+cannot be met. Lossless refers to encoding after image preparation.
+
+Choose **Verwalten…** in Settings to create a profile from the current form,
+rename it, replace its options, delete it or apply it to the form. Library changes
+are saved immediately. Applying a profile in Settings only changes the form:
+**Speichern** activates it, **Abbrechen** discards the form changes. Creating or
+updating a definition never saves other pending form values or update preferences.
+The profile name is shown while all options match; changed values show
+**Benutzerdefiniert**. A selection from the JD/app/Dock profile menu applies
+immediately for future drops. Already queued jobs keep their options and name.
+
+Profiles live in `~/Library/Application Support/JPEGdrop/profiles.json` (schema 1,
+stable IDs, up to 100 profiles). Names allow Unicode and punctuation, with 1–64
+characters; names differing only by case or Unicode normalization are duplicates.
+Reading never creates the library. Starters are stored with the first library
+change; deleted starters stay deleted. Corrupt, newer or unknown libraries are
+reported and preserved. Concurrent edits are rejected instead of overwriting a
+newer definition. Conversion with saved options remains available.
+
+## Optional comparison preview
+
+Choose **Vergleichsvorschau…** from the app, JD or Dock menu and select one image.
+Normal drops still convert directly. The preview uses the real encoder with a
+complete snapshot of image and output options. **Vorher** shows the oriented,
+sRGB source; **Nachher** shows the decoded output, with actual encoded bytes and
+pixel dimensions. Choose a profile in the comparison or use **Optionen übernehmen**.
+Changes in an open Settings form update the comparison without saving that form
+or update preferences. Choosing a profile here affects only this comparison.
+
+**Einpassen** fits both images. **100 % Ausgabe** maps one output pixel to one
+screen pixel; when resizing, the source is scaled to the same area. Drag or
+scroll to move the shared crop, and use −/+ to zoom. Checkerboard, white, dark and
+the selected output background are available for judging transparency.
+
+Only the latest options can be converted with **Mit diesen Optionen konvertieren**.
+The resulting job keeps that snapshot, while further drops use saved settings.
+A changed source requires recalculation. Until conversion, sources and regular
+output directories remain unchanged. One background preview process handles the
+latest request; new options discard stale results. **Berechnung abbrechen**, closing
+the window and quitting remove its private temporary files. Updates cancel previews
+and wait for their processes before relaunch; new previews are blocked meanwhile.
+Preview limits are 256 MiB per source, 64 megapixels and two minutes per calculation.
+These limits do not change regular conversion. A forced system kill cannot ensure cleanup.
+
+## Finder Quick Action
+
+Choose **Finder-Schnellaktion einrichten…** in the app or JD menu. It requires the
+signed, notarized `/Applications/JPEGdrop.app` and installs **Mit JPEGdrop
+konvertieren** in `~/Library/Services`. Select files or folders in Finder and use
+**Quick Actions** or **Services** from the context menu. If it is absent, enable it
+in System Settings → General → Login Items & Extensions → Finder (the wording
+depends on macOS). JPEGdrop does not change these system settings.
+
+The action opens the installed app with the selected paths and its saved options;
+an unsaved Settings form does not affect it. Spaces, quotes and other filename
+characters are passed as arguments. No AppleScript automation permission is
+required. Replacing JPEGdrop at the same installation path keeps the action usable.
+Moving the app away requires reinstalling it at that path before using the action.
+**Finder-Schnellaktion entfernen…** removes only an unchanged JPEGdrop-owned
+workflow. A foreign or manually modified workflow is preserved, including added
+files; manage that copy yourself in `~/Library/Services`.
+
 ## Jobs, progress and cancellation
 
 **Aufträge…** (⌘0) opens the job list with progress, current filenames, results,
@@ -130,6 +206,10 @@ From a source checkout with the dependencies installed:
 .venv/bin/python jpegdrop.py --output-subdir JPEGdrop --codec webp photo.png
 .venv/bin/python jpegdrop.py --target-size 500KB --target-resize --target-min-edge 320 photo.png
 .venv/bin/python jpegdrop.py --list-presets
+.venv/bin/python jpegdrop.py --list-profiles --json
+.venv/bin/python jpegdrop.py --profile Mail --max-edge 1200 --target-size 0 foto.png
+.venv/bin/python jpegdrop.py --install-finder-action
+.venv/bin/python jpegdrop.py --remove-finder-action
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
 
@@ -141,6 +221,15 @@ The downloaded app also contains a headless CLI:
 ```
 
 Without explicit option flags, the CLI uses the saved app settings.
+`--profile NAME` uses that profile as the complete image/output basis; explicit
+flags override it, regardless of their order. The CLI never saves its selection
+or overrides. Profile names match case-insensitively; quote spaces/punctuation
+and use `--profile=NAME` if the name starts with a hyphen. `--list-profiles` prints
+one name per line, or IDs, names and options with `--json`. An explicit codec
+keeps the profile preset if compatible, otherwise uses the codec default. Legacy
+`--quality` overrides the profile's codec/preset with JPEG and fixed quality;
+contradictory explicit flags are rejected. JPEG removes profile transparency;
+explicit `--preserve-alpha` with JPEG is an error.
 `--max-edge 0` disables a saved size limit. `--flatten-alpha` overrides saved
 alpha preservation, and `--background '#123456'` sets an opaque sRGB background.
 `--suffix` changes the default `-klein` suffix for sources already in the target

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.11.0 — 2026-10-16
+
+- Optional native before/after comparison using the real encoder and complete option snapshots.
+- Actual encoded sizes and dimensions, shared crop and zoom, output-pixel view and transparency backgrounds.
+- Bounded background previews with stale-result rejection, cancellation and temporary-file cleanup.
+- Conversion with reviewed options, unchanged unsaved Settings forms and preview-aware update/shutdown protection.
+
+## 2.10.0 — 2026-10-16
+
+- Named profiles with editable Mail, Website-Fotos and Screenshots starters.
+- Native profile management, saved/custom indicators and unchanged queued-job snapshots.
+- CLI profile selection with explicit-option priority and JSON profile inventory.
+- Finder Quick Action for the notarized installed app, with safe path arguments and protection for modified workflows.
+- Profile writes reject stale editors and preserve corrupt or unsupported libraries.
+
 ## 2.9.0 — 2026-10-16
 
 - Optional per-file byte limits with bounded quality search and visible progress.

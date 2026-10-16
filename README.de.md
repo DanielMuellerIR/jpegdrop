@@ -8,7 +8,7 @@ JPEGdrop erzeugt aus Bildern auf seinem macOS-Dock-Icon kleinere, metadatenfreie
 
 1. Das DMG unter [Releases](https://github.com/danielmuellerir/jpegdrop/releases) herunterladen.
 2. JPEGdrop nach Programme ziehen und öffnen. Python und Homebrew sind nicht nötig.
-3. Im **JD**-Menü oder unter **Einstellungen…** (⌘,) Codec und Preset wählen.
+3. Im **JD**-Menü oder unter **Einstellungen…** (⌘,) ein Profil oder Codec und Preset wählen.
 4. Bilder oder Ordner auf das Dock- oder Finder-Icon der App ziehen.
 
 Die Oberfläche ist deutsch. Standard ist **JPEG · hoch** (Qualität 85).
@@ -97,6 +97,91 @@ Fortschritt und lässt sich abbrechen. Passt kein erlaubter Kandidat, meldet
 JPEGdrop `target_size_unreachable` und erzeugt keine Ausgabe. Eine zu große
 Datei wird nie stillschweigend als Erfolg veröffentlicht.
 
+## Benannte Profile
+
+Profile enthalten alle Bild- und Ablageoptionen einschließlich Unterordnerwahl.
+Update-Einstellungen gelten global. Bestehende Einstellungen behalten ihre Werte
+und erscheinen zunächst als **Benutzerdefiniert**. Die editierbaren Startprofile:
+
+| Profil | Optionen |
+|---|---|
+| Mail | JPEG q85, höchstens 1600 px und 500.000 Byte; das Limit darf die Qualität bis q15 senken, ohne weiteres Verkleinern |
+| Website-Fotos | WebP q75, höchstens 2000 px, kein Größenlimit |
+| Screenshots | Verlustfreie PNG-Kodierung, Originalmaße, Transparenz erhalten |
+
+Alle Startprofile schreiben neben die Quelle und beziehen keine Unterordner ein.
+Bilder werden niemals vergrößert. Bei unerreichbarem Limit meldet Mail einen
+Fehler und erzeugt keine zu große Datei. Verlustfrei bezieht sich auf die
+Kodierung nach der Bildvorbereitung.
+
+**Verwalten…** in den Einstellungen öffnet die Profilverwaltung: Neu aus dem
+aktuellen Formular, Umbenennen, Optionen ersetzen, Löschen und im Formular
+anwenden. Bibliotheksänderungen werden sofort gespeichert. Eine Profilwahl in
+den Einstellungen ändert nur das Formular: **Speichern** aktiviert sie,
+**Abbrechen** verwirft die Formularänderungen. Erstellen und Aktualisieren
+speichern keine anderen offenen Formularwerte oder Update-Einstellungen.
+Solange alle Optionen übereinstimmen, erscheint der Profilname; bei Abweichungen
+**Benutzerdefiniert**. Eine Auswahl im Profilmenü von JD, App oder Dock gilt
+sofort für künftige Drops. Bereits eingereihte Aufträge behalten Optionen und Namen.
+
+Profile liegen in `~/Library/Application Support/JPEGdrop/profiles.json`
+(Schema 1, stabile IDs, höchstens 100 Profile). Namen erlauben Unicode und
+Satzzeichen bei 1–64 Zeichen; Groß-/Kleinschreibung und Unicode-Normalisierung
+unterscheiden keine Namen. Lesen legt keine Bibliothek an. Die erste Änderung
+speichert die Startprofile mit; gelöschte Startprofile bleiben gelöscht.
+Beschädigte, neuere oder unbekannte Bibliotheken werden gemeldet und erhalten.
+Konkurrierende Änderungen werden abgelehnt, statt neuere Definitionen zu
+überschreiben. Konvertieren mit gespeicherten Optionen bleibt möglich.
+
+## Optionale Vergleichsvorschau
+
+**Vergleichsvorschau…** im App-, JD- oder Dock-Menü öffnet den Vergleich für ein
+einzelnes Bild. Normale Drops konvertieren weiterhin direkt. Die Vorschau nutzt
+den echten Encoder mit einem vollständigen Snapshot der Bild- und Ablageoptionen.
+**Vorher** zeigt die ausgerichtete, nach sRGB umgerechnete Quelle, **Nachher** die
+dekodierte Ausgabe mit tatsächlicher Bytezahl und Pixelmaßen. Ein Profil im
+Vergleich wählen oder **Optionen übernehmen** verwenden. Änderungen im offenen
+Einstellungsformular aktualisieren den Vergleich, ohne Formularwerte oder
+Update-Optionen zu speichern. Die Profilwahl hier gilt nur für diesen Vergleich.
+
+**Einpassen** passt beide Bilder ein. **100 % Ausgabe** bildet ein Ausgabepixel
+auf ein Bildschirmpixel ab; bei Verkleinerung wird die Quelle auf dieselbe Fläche
+skaliert. Ziehen oder Scrollen verschiebt den gemeinsamen Ausschnitt, −/+ ändert
+den Zoom. Schachbrett, Weiß, Dunkel und der gewählte Ausgabehintergrund helfen
+beim Beurteilen von Transparenz.
+
+**Mit diesen Optionen konvertieren** verwendet ausschließlich den aktuellen,
+vollständig berechneten Stand. Der Auftrag behält diesen Snapshot, weitere Drops
+nutzen die gespeicherten Einstellungen. Eine veränderte Quelle erfordert eine
+Neuberechnung. Bis zur Konvertierung bleiben Quellen und reguläre Zielablagen
+unverändert. Ein Vorschauprozess verarbeitet jeweils den neuesten Auftrag;
+Optionswechsel verwerfen veraltete Ergebnisse. **Berechnung abbrechen**, Schließen
+und Beenden entfernen eigene temporäre Dateien. Updates brechen Vorschauen ab,
+warten auf deren Prozessende und sperren bis zum Neustart neue Vorschauen.
+Vorschaugrenzen: 256 MiB je Quelle, 64 Megapixel und zwei Minuten je Berechnung.
+Sie ändern die normale Konvertierung nicht. Erzwungenes Prozessende kann kein
+Aufräumen garantieren.
+
+## Finder-Schnellaktion
+
+Im App- oder JD-Menü **Finder-Schnellaktion einrichten…** wählen. Voraussetzung
+ist die signierte, notarisierte `/Applications/JPEGdrop.app`. **Mit JPEGdrop
+konvertieren** wird unter `~/Library/Services` eingerichtet. Dateien oder Ordner
+im Finder auswählen und die Aktion unter **Schnellaktionen** oder **Dienste**
+im Kontextmenü aufrufen. Falls sie fehlt: Systemeinstellungen → Allgemein →
+Anmeldeobjekte & Erweiterungen → Finder aktivieren; die Bezeichnung hängt von
+macOS ab. JPEGdrop verändert diese Systemeinstellungen nicht.
+
+Die Aktion öffnet die installierte App mit den gewählten Pfaden und ihren
+gespeicherten Optionen; ungespeicherte Formularwerte gelten dafür nicht.
+Leerzeichen, Anführungszeichen und andere Dateinamenzeichen werden als Argumente
+übergeben. AppleScript-Automationsrechte sind nicht erforderlich. Ein Austausch
+der App am gleichen Installationspfad erhält die Aktion. Nach Verschieben der
+App muss sie vor Nutzung wieder an diesem Pfad installiert werden.
+**Finder-Schnellaktion entfernen…** entfernt nur einen unveränderten Workflow
+von JPEGdrop. Fremde oder manuell geänderte Workflows einschließlich zusätzlicher
+Dateien bleiben erhalten; diese Kopien selbst unter `~/Library/Services` verwalten.
+
 ## Aufträge, Fortschritt und Abbruch
 
 **Aufträge…** (⌘0) öffnet die Liste mit Fortschritt, aktuellem Dateinamen,
@@ -140,6 +225,10 @@ Aus einem Quellcheckout mit installierten Abhängigkeiten:
 .venv/bin/python jpegdrop.py --output-subdir JPEGdrop --codec webp foto.png
 .venv/bin/python jpegdrop.py --target-size 500KB --target-resize --target-min-edge 320 foto.png
 .venv/bin/python jpegdrop.py --list-presets
+.venv/bin/python jpegdrop.py --list-profiles --json
+.venv/bin/python jpegdrop.py --profile Mail --max-edge 1200 --target-size 0 foto.png
+.venv/bin/python jpegdrop.py --install-finder-action
+.venv/bin/python jpegdrop.py --remove-finder-action
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
 
@@ -151,6 +240,16 @@ Auch die heruntergeladene App enthält eine headless nutzbare CLI:
 ```
 
 Ohne explizite Optionsflags gelten die gespeicherten App-Einstellungen.
+`--profile NAME` verwendet das Profil als vollständige Bild-/Ablagebasis;
+explizite Flags überschreiben es unabhängig von ihrer Reihenfolge. Die CLI
+speichert weder Auswahl noch Overrides. Profilnamen werden ohne Unterscheidung
+der Groß-/Kleinschreibung gesucht; Leerzeichen/Satzzeichen quotieren und für
+Namen mit führendem Bindestrich `--profile=NAME` verwenden. `--list-profiles`
+zeigt einen Namen je Zeile, mit `--json` IDs, Namen und Optionen. Ein expliziter
+Codec behält ein kompatibles Profil-Preset, sonst gilt sein Standard. Legacy
+`--quality` überschreibt Codec/Preset des Profils mit JPEG und fester Qualität;
+widersprüchliche explizite Flags werden abgelehnt. JPEG entfernt die im Profil
+gewählte Transparenz; explizites `--preserve-alpha` mit JPEG ist ein Fehler.
 `--max-edge 0` deaktiviert eine gespeicherte Größenbegrenzung. `--flatten-alpha`
 überschreibt gespeicherte Alpha-Erhaltung, `--background '#123456'` wählt einen
 opaken sRGB-Hintergrund.
