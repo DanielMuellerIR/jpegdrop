@@ -50,7 +50,7 @@ from typing import Any, Callable
 
 from PIL import Image, ImageOps, ImageCms
 
-__version__ = "2.6.1"
+__version__ = "2.6.2"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.

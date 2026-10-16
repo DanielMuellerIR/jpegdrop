@@ -244,7 +244,7 @@ class JobManager:
                 raise ValueError("Unbekanntes CLI-Ereignis")
 
     def _run(self, job: Job) -> None:
-        cmd = [self.python, "-B", self.script, "--codec", job.codec,
+        cmd = [self.python, "-I", "-B", self.script, "--codec", job.codec,
                "--preset", job.preset, "--events", "--", *job.paths]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", JPEGDROP_JOB_ID=job.id)
         with self._condition:

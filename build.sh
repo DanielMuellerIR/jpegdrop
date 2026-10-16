@@ -280,8 +280,8 @@ fi
 
 BUNDLE_PY="$APP_RES/python/bin/python3"
 echo "    Abhängigkeiten in den eingebetteten Interpreter installieren"
-"$BUNDLE_PY" -m pip install --quiet --disable-pip-version-check --no-cache-dir -r "$HERE/requirements-app.txt"
-PYTHONDONTWRITEBYTECODE=1 "$BUNDLE_PY" "$HERE/tools/collect_licenses.py" --repo "$HERE" --app "$APP"
+"$BUNDLE_PY" -I -m pip install --quiet --disable-pip-version-check --no-cache-dir -r "$HERE/requirements-app.txt"
+"$BUNDLE_PY" -I -B "$HERE/tools/collect_licenses.py" --repo "$HERE" --app "$APP"
 
 # Der native Prozess bleibt im äußeren App-Bundle. Ein exec des Python-
 # Programms änderte NSBundle.mainBundle; Sparkle behandelte JPEGdrop dann
@@ -322,10 +322,10 @@ find "$APP_RES/python" -name '__pycache__' -type d -prune -exec rm -rf {} +
 # hier ist ein Ausdünn-Fehler und soll den Bau abbrechen, statt erst beim ersten
 # Bilddrop aufzufallen.
 #
-# PYTHONDONTWRITEBYTECODE, damit dieser Lauf keine .pyc-Dateien hinterlässt: Sie
+# -B verhindert, dass dieser Lauf .pyc-Dateien hinterlässt: Sie
 # würden den Pfad DIESES Macs einbacken (Python schreibt den Quellpfad in jede
 # .pyc). Erzeugt werden sie gleich darunter, dann mit gekürzten Pfaden.
-PYTHONDONTWRITEBYTECODE=1 "$BUNDLE_PY" -c 'import PIL, pi_heif, objc, AppKit, Foundation' \
+"$BUNDLE_PY" -I -B -c 'import PIL, pi_heif, objc, AppKit, Foundation' \
   || { echo "Fehler: eingebetteter Interpreter unvollständig." >&2; exit 1; }
 "$PY" "$HERE/tools/check_compatibility.py" --app "$APP"
 
@@ -343,7 +343,7 @@ PYTHONDONTWRITEBYTECODE=1 "$BUNDLE_PY" -c 'import PIL, pi_heif, objc, AppKit, Fo
 # diesem Mac steht dort "/JPEGdrop.app/…". "unchecked-hash" heißt: Python nimmt
 # die .pyc, ohne die Quelldatei zu vergleichen — auch das verhindert Schreiben.
 echo "    Module vorkompilieren"
-"$BUNDLE_PY" -m compileall -q -f --invalidation-mode unchecked-hash \
+"$BUNDLE_PY" -I -B -m compileall -q -f --invalidation-mode unchecked-hash \
   -s "$APP" -p "/JPEGdrop.app" "$APP_RES" >/dev/null
 
 # Icon einbacken (falls Master vorhanden)
@@ -585,4 +585,4 @@ echo "    Headless / Agent (aus dem Repo):"
 echo "    $PY $HERE/jpegdrop.py --list-presets"
 echo "    $PY $HERE/jpegdrop.py --codec avif --preset mittel bild.heic"
 echo "    …oder aus dem fertigen Bundle heraus, ganz ohne Repo:"
-echo "    $APP_RES/python/bin/python3 $APP_RES/jpegdrop.py --list-presets"
+echo "    $APP_RES/python/bin/python3 -I -B $APP_RES/jpegdrop.py --list-presets"

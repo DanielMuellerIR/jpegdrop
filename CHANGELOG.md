@@ -1,12 +1,13 @@
 # Changelog
 
-## 2.6.1 — 2026-10-16
+## 2.6.2 — 2026-10-16
 
 - MIT license for JPEGdrop, bundled third-party notices and corresponding HEIF sources.
 - Decoder-only HEIC dependency; output behavior remains unchanged.
 - English and German documentation, offline privacy information and project links.
 - macOS test workflow without signing credentials.
 - First public distribution through GitHub Releases and a signed Sparkle feed.
+- Conversion subprocesses use the bundled Python packages independently of external Python paths.
 
 ## 2.5.1 — 2026-10-16
 

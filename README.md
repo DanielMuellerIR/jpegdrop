@@ -87,7 +87,7 @@ From a source checkout with the dependencies installed:
 The downloaded app also contains a headless CLI:
 
 ```sh
-"/Applications/JPEGdrop.app/Contents/Resources/python/bin/python3" -B \
+"/Applications/JPEGdrop.app/Contents/Resources/python/bin/python3" -I -B \
   "/Applications/JPEGdrop.app/Contents/Resources/jpegdrop.py" --json photo.heic
 ```
 

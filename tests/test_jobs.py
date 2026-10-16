@@ -29,6 +29,23 @@ def wait_for(predicate, seconds=6):
 
 
 class JobsTests(unittest.TestCase):
+    def test_external_python_paths_cannot_replace_conversion_dependencies(self):
+        from unittest.mock import patch
+        poison = self.root / "external" / "PIL"
+        poison.mkdir(parents=True)
+        (poison / "__init__.py").write_text('raise RuntimeError("External Python path loaded")\n')
+        source = self.image()
+        manager = self.manager()
+        with patch.dict(os.environ, {"PYTHONPATH": str(poison.parent)}):
+            manager.submit([str(source)], SETTINGS)
+            wait_for(lambda: not manager.has_active_jobs)
+        job = manager.snapshot()[1][0]
+        self.assertEqual(job.state, "completed", job.problem)
+        self.assertEqual(len(job.targets), 1)
+        with Image.open(job.targets[0]) as converted:
+            self.assertEqual(converted.size, (48, 48))
+            self.assertFalse(converted.getexif())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="jpegdrop_jobs_")
         self.root = Path(self.directory.name)

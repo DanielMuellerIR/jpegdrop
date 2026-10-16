@@ -375,9 +375,9 @@ def test_bauskript_kompiliert_ohne_mac_pfad_vor():
     assert '-s "$APP" -p "/JPEGdrop.app"' in quelle, (
         "compileall braucht -s/-p, sonst steht der Bau-Pfad in jeder .pyc."
     )
-    assert "PYTHONDONTWRITEBYTECODE=1" in quelle, (
-        "Ohne PYTHONDONTWRITEBYTECODE legt schon der Selbsttest .pyc-Dateien mit "
-        "dem Bau-Pfad an — und die App schriebe zur Laufzeit in ihr eigenes Bundle."
+    assert '"$BUNDLE_PY" -I -B -c' in quelle, (
+        "Der Selbsttest muss isoliert und ohne Bytecode-Schreiben laufen, "
+        "sonst können externe Pakete geladen oder Bau-Pfade eingebrannt werden."
     )
 
 
