@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.12.0 — 2026-10-16
+
+- Public release of named profiles, the Finder Quick Action and the optional comparison preview.
+- Profiles, size limits and output locations work together through complete job snapshots.
+- The declared macOS 12 minimum remains unverified at runtime; tested systems are listed in the release notes.
+
 ## 2.11.0 — 2026-10-16
 
 - Optional native before/after comparison using the real encoder and complete option snapshots.

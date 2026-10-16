@@ -58,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
                             inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.11.0"
+__version__ = "2.12.0"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
