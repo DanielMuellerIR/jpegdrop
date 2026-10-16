@@ -100,6 +100,8 @@ Ohne explizite Codec-/Preset-Flags gelten die gespeicherten App-Einstellungen.
 vorliegen. `-q/--quality` bleibt für JPEG mit fester Qualität verfügbar.
 Der Exit-Status ist die Anzahl Fehler, begrenzt auf 125; null bedeutet Erfolg.
 
+Versionen ohne Update-Menü benötigen einmalig die manuelle Installation des aktuellen DMGs.
+
 ## Bauen und prüfen
 
 Python 3.14 und Xcode Command Line Tools auf macOS verwenden:

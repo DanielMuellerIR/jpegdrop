@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.package_sources import package_sources
+from tools.package_sources import package_sources, verify_package
 
 
 class DependencySourceTests(unittest.TestCase):
@@ -26,6 +26,10 @@ class DependencySourceTests(unittest.TestCase):
             with patch('tools.package_sources.urllib.request.urlopen', return_value=io.BytesIO(data)):
                 digest = package_sources(root, output)
             self.assertEqual(digest, hashlib.sha256(output.read_bytes()).hexdigest())
+            verify_package(root, output)
+            (licenses / 'NOTICE.txt').write_text('changed notice')
+            with self.assertRaises(ValueError):
+                verify_package(root, output)
             with tarfile.open(output) as archive:
                 self.assertEqual(archive.extractfile('library-1.0.tar.gz').read(), data)
                 self.assertEqual(archive.extractfile('Licenses/NOTICE.txt').read(), b'required notice')

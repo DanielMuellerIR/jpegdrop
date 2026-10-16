@@ -48,12 +48,19 @@ macOS versions. Record the actual tested systems in release notes.
 
 ## Sparkle publication
 
+The notarized DMG is also the Sparkle update archive. The appcast workflow
+verifies its payload against the release tag before signing. It verifies both
+the archive and feed signatures, then deploys the exact XML bytes to Pages.
+A failed deployment should be restarted with a fresh workflow dispatch for
+the tag, rather than rerunning failed jobs in the same attempt.
+
+
 The production feed is `https://danielmuellerir.github.io/jpegdrop/appcast.xml`.
 Only the public Ed25519 key is in the app. Signing tools obtain the private key
 from the configured local keychain account. Both archive and XML feed must be
 signed and independently verified before publication.
 
-Publish the DMG, its checksum, a Sparkle ZIP and the dependency source archive
+Publish the DMG, its checksum and the dependency source archive
 under the tag matching the build's source commit. Upload the artifacts before
 publishing a feed that references them. Serve the signed XML without rewriting
 its bytes. Test the published URLs, download hashes and signatures, then update

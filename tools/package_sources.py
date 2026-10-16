@@ -42,16 +42,38 @@ def package_sources(repo: Path, output: Path) -> str:
     return hashlib.sha256(output.read_bytes()).hexdigest()
 
 
+def verify_package(repo: Path, archive: Path) -> None:
+    sources = json.loads((repo / "licenses/sources.json").read_text())
+    with tarfile.open(archive) as tar:
+        def content(name):
+            member = tar.getmember(name)
+            if not member.isfile() or member.size > 100_000_000:
+                raise ValueError("Unerwarteter Eintrag im Quellenpaket.")
+            return tar.extractfile(member).read()
+        for source in sources:
+            name = f'{source["name"]}-{source["version"]}.tar.gz'
+            if hashlib.sha256(content(name)).hexdigest() != source["sha256"]:
+                raise ValueError(f"Quellpaket enthält abweichende Bibliothek: {name}")
+        for notice in (repo / "licenses").rglob("*"):
+            if notice.is_file() and content("Licenses/" + notice.relative_to(repo / "licenses").as_posix()) != notice.read_bytes():
+                raise ValueError("Lizenzhinweise im Quellenpaket weichen vom Quellstand ab.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", required=True, type=Path)
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument("--output", type=Path)
+    actions.add_argument("--verify", type=Path)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
     try:
-        digest = package_sources(args.repo, args.output)
-    except (OSError, ValueError) as error:
+        if args.verify:
+            verify_package(args.repo, args.verify)
+        else:
+            digest = package_sources(args.repo, args.output)
+    except (OSError, ValueError, KeyError, tarfile.TarError) as error:
         parser.exit(2, f"FEHLER: {error}\n")
-    print(f"{digest}  {args.output.name}")
+    print("Quellenpaket und Lizenzhinweise geprüft." if args.verify else f"{digest}  {args.output.name}")
 
 
 if __name__ == "__main__":

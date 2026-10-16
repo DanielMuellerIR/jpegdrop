@@ -1,0 +1,75 @@
+name: Publish Sparkle appcast
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag, for example v2.6.1
+        required: true
+        type: string
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: sparkle-appcast
+  cancel-in-progress: false
+jobs:
+  appcast:
+    runs-on: macos-15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Download exact release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="${RELEASE_TAG#v}"
+          mkdir -p "$RUNNER_TEMP/jpegdrop/update" "$RUNNER_TEMP/jpegdrop/sources"
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" \
+            --pattern "JPEGdrop-$version.dmg" --pattern "JPEGdrop-$version.dmg.sha256" \
+            --dir "$RUNNER_TEMP/jpegdrop/update"
+          gh release download "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" \
+            --pattern "JPEGdrop-$version-dependency-sources.tar.gz" --dir "$RUNNER_TEMP/jpegdrop/sources"
+          (cd "$RUNNER_TEMP/jpegdrop/update" && shasum -a 256 -c "JPEGdrop-$version.dmg.sha256")
+          gh release view "$RELEASE_TAG" -R "$GITHUB_REPOSITORY" --json body --jq .body \
+            > "$RUNNER_TEMP/jpegdrop/update/JPEGdrop-$version.md"
+      - name: Verify notarized DMG, payload and tagged source
+        run: python tools/verify_release_dmg.py --tag "$RELEASE_TAG" --dmg "$RUNNER_TEMP/jpegdrop/update/JPEGdrop-${RELEASE_TAG#v}.dmg"
+      - name: Verify corresponding dependency sources and notices
+        run: python tools/package_sources.py --verify "$RUNNER_TEMP/jpegdrop/sources/JPEGdrop-${RELEASE_TAG#v}-dependency-sources.tar.gz"
+      # Laden/Entpacken fremder Werkzeuge erfolgt vor dem Zugriff auf den Schlüssel.
+      - name: Prepare pinned signing tools
+        run: python tools/create_appcast.py prepare-tools --cache "$RUNNER_TEMP/jpegdrop/cache" --output "$RUNNER_TEMP/jpegdrop/tools"
+      - name: Sign and verify archive and feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          python tools/create_appcast.py sign --tools "$RUNNER_TEMP/jpegdrop/tools" \
+            --update "$RUNNER_TEMP/jpegdrop/update" --site "$RUNNER_TEMP/jpegdrop/site" \
+            --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG"
+          cp assets/privacy.html "$RUNNER_TEMP/jpegdrop/site/privacy.html"
+          cp assets/update-index.html "$RUNNER_TEMP/jpegdrop/site/index.html"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jpegdrop/site
+      - name: Deploy appcast
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

@@ -96,6 +96,8 @@ Without explicit codec/preset flags, the CLI uses the saved app settings.
 codec. `-q/--quality` retains fixed-quality JPEG compatibility. The exit status
 is the number of errors, capped at 125; zero means success.
 
+Versions without the update menu need one manual installation of the current DMG.
+
 ## Build and test
 
 Use Python 3.14 and Xcode Command Line Tools on macOS:
