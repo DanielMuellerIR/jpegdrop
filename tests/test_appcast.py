@@ -9,10 +9,24 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from create_appcast import sign_appcast
-from verify_release_dmg import mounted_device
+from verify_release_dmg import mounted_device, run
 
 
 class AppcastTests(unittest.TestCase):
+    def test_ticket_network_failure_is_retried_but_rejection_is_not(self):
+        network = subprocess.CalledProcessError(68, ['xcrun'], output=b'NSURLErrorDomain Code=-1005 connection lost')
+        with patch('verify_release_dmg.subprocess.check_output', side_effect=[network, b'accepted']) as call, \
+                patch('verify_release_dmg.time.sleep') as sleep:
+            self.assertEqual(run('/usr/bin/xcrun', 'stapler', 'validate', '/fixture.app'), b'accepted')
+            self.assertEqual(call.call_count, 2)
+            sleep.assert_called_once_with(2)
+        rejection = subprocess.CalledProcessError(68, ['xcrun'], output=b'Ticket is invalid')
+        with patch('verify_release_dmg.subprocess.check_output', side_effect=rejection) as call, \
+                patch('verify_release_dmg.time.sleep') as sleep, self.assertRaises(ValueError):
+            run('/usr/bin/xcrun', 'stapler', 'validate', '/fixture.app')
+        self.assertEqual(call.call_count, 1)
+        sleep.assert_not_called()
+
     def test_mount_device_selection_uses_exact_private_mount(self):
         info = {'images': [{'system-entities': [
             {'mount-point': '/other/mount', 'dev-entry': '/dev/foreign'},
