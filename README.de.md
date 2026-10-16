@@ -40,7 +40,7 @@ keine HEIC-Dateien.
 - Dateinamen, Dateisystem-Zeitstempel und sichtbare Bildinhalte werden nicht anonymisiert.
 
 JPEG, AVIF und WebP bieten sechs feste Qualitätsstufen sowie **auto**. Auto passt
-die Qualität an das Kompressionsverhalten des Bildes an, nicht seine Abmessungen.
+die Qualität an die längere Bildkante an, nicht seine Abmessungen.
 PNG bietet verlustfreie Kodierung oder eine reduzierte Palette mit 256 Farben.
 „Verlustfrei“ beschreibt die PNG-Kodierung nach RGB-/sRGB-Umrechnung und dem
 Entfernen von Transparenz; diese Vorbereitung kann die Quellpixel ändern.

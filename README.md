@@ -39,7 +39,7 @@ can be read. HEIC is an input format; JPEGdrop does not produce HEIC files.
 - Filenames, filesystem timestamps and visible image contents are not anonymized.
 
 JPEG, AVIF and WebP offer six fixed quality levels and **auto**, which adapts
-quality to the image's compression behavior. It does not resize the image.
+quality to the image's longer edge. It does not resize the image.
 PNG offers lossless encoding or a reduced 256-color palette. “Lossless” describes
 PNG encoding after RGB/sRGB conversion and transparency flattening; those
 preparation steps may change source pixels. The highest JPEG preset still uses
