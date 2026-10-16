@@ -70,7 +70,7 @@ def test_invalid_preset_falls_back_codec_valid():
 def test_invalid_preset_jpeg_falls_back_hoch():
     """Bei JPEG ist "hoch" gültig — der bisherige Fallback bleibt erhalten."""
     s = _load_with_settings_file('{"codec": "jpeg", "preset": "quatsch"}')
-    assert s == {"codec": "jpeg", "preset": "hoch"}, f"Erwartet jpeg/hoch, tatsächlich: {s}"
+    assert s == dict(jpegdrop.DEFAULT_SETTINGS), f"Erwartet jpeg/hoch, tatsächlich: {s}"
 
 
 def test_invalid_codec_falls_back_defaults():
@@ -102,7 +102,7 @@ def test_save_load_roundtrip():
         jpegdrop.SETTINGS_PATH = tmp_dir / "settings.json"
         jpegdrop.save_settings({"codec": "avif", "preset": "mittel"})
         s = jpegdrop.load_settings()
-        assert s == {"codec": "avif", "preset": "mittel"}, f"Roundtrip verfälscht: {s}"
+        assert s == {**jpegdrop.DEFAULT_SETTINGS, "codec": "avif", "preset": "mittel"}, f"Roundtrip verfälscht: {s}"
         # Atomares Schreiben: keine .tmp-Datei übrig
         leftovers = list(tmp_dir.glob("*.tmp"))
         assert not leftovers, f"Temp-Datei nicht weggeräumt: {leftovers}"

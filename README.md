@@ -34,17 +34,22 @@ can be read. HEIC is an input format; JPEGdrop does not produce HEIC files.
 - EXIF orientation is applied before embedded EXIF/GPS/ICC metadata is removed.
 - Supported color profiles are converted to sRGB. Invalid or incompatible
   profiles cause an error rather than an unchecked output.
-- Transparency is currently flattened onto white for every output codec.
-  A warning identifies images whose transparent pixels were affected.
+- PNG, AVIF and WebP can preserve transparency. By default, transparency is
+  flattened onto white; a custom background color is available in Settings.
+  JPEG always removes transparency. A warning reports affected images.
+- A maximum image edge optionally resizes images proportionally with Lanczos,
+  after orientation is applied. Smaller images are never enlarged.
 - Animated or multi-image files are rejected. The first frame is not silently
   exported as a still image.
 - Filenames, filesystem timestamps and visible image contents are not anonymized.
 
 JPEG, AVIF and WebP offer six fixed quality levels and **auto**, which adapts
-quality to the image's longer edge. It does not resize the image.
+quality to the prepared image's longer edge, after optional resizing.
 PNG offers lossless encoding or a reduced 256-color palette. “Lossless” describes
-PNG encoding after RGB/sRGB conversion and transparency flattening; those
-preparation steps may change source pixels. The highest JPEG preset still uses
+PNG or WebP encoding after the selected color, transparency and size options;
+those preparation steps may change source pixels. WebP also has a true lossless
+preset that preserves all prepared pixels, including transparent ones. The
+256-color PNG preset can reduce both color and alpha levels. The highest JPEG preset still uses
 lossy encoding. An already optimized image may become larger; sizes and warnings
 are reported honestly.
 
@@ -82,6 +87,7 @@ From a source checkout with the dependencies installed:
 ```sh
 .venv/bin/python jpegdrop.py --codec avif --preset mittel photo.heic
 .venv/bin/python jpegdrop.py --json --codec jpeg photo.png
+.venv/bin/python jpegdrop.py --codec webp --preset verlustfrei --preserve-alpha --max-edge 1600 photo.png
 .venv/bin/python jpegdrop.py --list-presets
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
@@ -93,7 +99,9 @@ The downloaded app also contains a headless CLI:
   "/Applications/JPEGdrop.app/Contents/Resources/jpegdrop.py" --json photo.heic
 ```
 
-Without explicit codec/preset flags, the CLI uses the saved app settings.
+Without explicit option flags, the CLI uses the saved app settings.
+`--max-edge 0` disables a saved size limit. `--flatten-alpha` overrides saved
+alpha preservation, and `--background '#123456'` sets an opaque sRGB background.
 `--suffix` changes the default `-klein` suffix for sources already in the target
 codec. `-q/--quality` retains fixed-quality JPEG compatibility. The exit status
 is the number of errors, capped at 125; zero means success.

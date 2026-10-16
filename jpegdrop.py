@@ -16,8 +16,8 @@ Was es macht — pro Bild:
     (sonst stünde ein iPhone-Foto nach dem Strippen schief)
   - Nicht-sRGB-Farbprofile (z.B. iPhone Display-P3) werden nach sRGB umgerechnet,
     bevor das Profil entfernt wird -> Farben bleiben korrekt, ganz ohne Metadaten
-  - Transparenz wird derzeit bei allen Ziel-Codecs auf Weiß flachgelegt;
-    tatsächlicher Transparenzverlust wird als Warnung gemeldet
+  - Transparenz optional erhalten oder auf die gewählte Hintergrundfarbe legen
+  - Bilder optional proportional verkleinern, niemals vergrößern
   - Mehrbildquellen und nicht anwendbare Farbprofile werden abgelehnt
 
 Zieldatei liegt NEBEN der Quelle. Name:
@@ -39,6 +39,7 @@ import errno
 import io
 import json
 import os
+import re
 import signal
 import shutil
 import sys
@@ -50,7 +51,7 @@ from typing import Any, Callable
 
 from PIL import Image, ImageOps, ImageCms
 
-__version__ = "2.6.3"
+__version__ = "2.7.0"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -148,13 +149,12 @@ def _jpeg_save_kwargs(preset_name: str, auto_quality: int) -> dict[str, Any]:
 PNG_PRESETS = (
     Preset(
         "verlustfrei", "Verlustfreie PNG-Kodierung",
-        "Keine zusätzlichen Kodierverluste. Vorher werden Farben nach RGB/sRGB "
-        "umgerechnet und Transparenz auf Weiß gelegt.",
+        "Keine zusätzlichen Kodierverluste nach Farb-, Transparenz- und Größenoptionen.",
         None,
     ),
     Preset(
         "klein_256", "Klein (256 Farben)",
-        "Paletten-PNG mit 256 Farben. Für Fotos sichtbarer Verlust, "
+        "Paletten-PNG mit 256 Farben; Farb- und Alphastufen können reduziert werden. Für Fotos sichtbarer Verlust, "
         "für UI-Grafiken/Illustrationen oft kaum sichtbar — und deutlich kleiner.",
         {"palette_colors": 256},
     ),
@@ -210,6 +210,7 @@ def _avif_save_kwargs(preset_name: str, auto_quality: int) -> dict[str, Any]:
 # -- WebP --------------------------------------------------------------------
 # Optionaler Codec, in Pillow direkt dabei. Hat verlustfrei + verlustbehaftet.
 WEBP_PRESETS = (
+    Preset("verlustfrei", "Verlustfreies WebP", "Keine Kodierverluste nach der gewählten Bildvorbereitung; auch transparente Pixel bleiben erhalten.", None),
     Preset("maximal",    "Maximal (q90)",     "Höchste Qualität.",         None),
     Preset("hoch",       "Hoch (q75)",        "Sehr gute Qualität.",       None),
     Preset("mittel",     "Mittel (q60)",      "Guter Sweet-Spot.",         None),
@@ -223,8 +224,9 @@ WEBP_PRESETS_WITH_AUTO = (
 
 
 def _webp_save_kwargs(preset_name: str, auto_quality: int) -> dict[str, Any]:
-    """Mappt Preset -> Pillow-Save-Kwargs für WebP (verlustbehaftet, method=6 = beste Kompression)."""
+    """WebP-Presets mit expliziter verlustfreier Kodierung und hohem Encoderaufwand."""
     table = {
+        "verlustfrei": {"lossless": True, "exact": True, "method": 6},
         "maximal":    {"quality": 90, "method": 6},
         "hoch":       {"quality": 75, "method": 6},
         "mittel":     {"quality": 60, "method": 6},
@@ -251,7 +253,7 @@ CODECS: dict[str, Codec] = {
         name="png",
         label="PNG",
         extension=".png",
-        description="Verlustfreie Kodierung nach RGB/sRGB-Umrechnung. Transparenz wird auf Weiß gelegt.",
+        description="Verlustfreie Kodierung nach Bildvorbereitung; optional mit Transparenz.",
         presets=PNG_PRESETS_WITH_AUTO,
         default_preset="verlustfrei",
         native_extensions=(".png",),
@@ -269,7 +271,7 @@ CODECS: dict[str, Codec] = {
         name="webp",
         label="WebP",
         extension=".webp",
-        description="Effizient, breit unterstützt. Verlustbehaftet hier (kein Alpha-Output).",
+        description="Effizient, breit unterstützt. Verlustbehaftet oder verlustfrei, optional mit Transparenz.",
         presets=WEBP_PRESETS_WITH_AUTO,
         default_preset="hoch",
         native_extensions=(".webp",),
@@ -574,10 +576,30 @@ class ImageInputError(ValueError):
         self.code = code
 
 
-def normalize_image(img: Image.Image, *, notices: list[dict] | None = None) -> Image.Image:
-    """Bringt das Bild in einen sauberen, Codec-tauglichen sRGB-RGB-Zustand:
-    Orientierung einrechnen, Farbprofil nach sRGB backen, Transparenz flachlegen.
-    Gibt ein RGB-Bild ohne nutzbare Metadaten im .info zurück."""
+@dataclass(frozen=True)
+class ImageOptions:
+    max_edge: int = 0
+    preserve_alpha: bool = False
+    background: str = "#FFFFFF"
+
+    def __post_init__(self):
+        if type(self.max_edge) is not int or self.max_edge < 0:
+            raise ValueError("Die maximale Bildkante muss eine ganze Zahl ab 0 sein.")
+        if type(self.preserve_alpha) is not bool:
+            raise ValueError("Transparenz erhalten muss ein Wahrheitswert sein.")
+        if not isinstance(self.background, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", self.background):
+            raise ValueError("Die Hintergrundfarbe muss als #RRGGBB angegeben werden.")
+        object.__setattr__(self, "background", self.background.upper())
+
+    @classmethod
+    def from_settings(cls, settings: dict) -> ImageOptions:
+        return cls(**{key: settings.get(key, value) for key, value in
+                      {"max_edge": 0, "preserve_alpha": False, "background": "#FFFFFF"}.items()})
+
+
+def normalize_image(img: Image.Image, *, notices: list[dict] | None = None,
+                    options: ImageOptions = ImageOptions()) -> Image.Image:
+    """Orientierung und sRGB einrechnen, Alpha behandeln und Metadaten entfernen."""
 
     # 1) EXIF-Orientierung ins Pixelbild einrechnen, solange wir die EXIF noch
     #    haben. Danach darf die Orientierung gefahrlos verworfen werden.
@@ -586,6 +608,8 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None) -> I
     # Farbprofil merken, BEVOR wir den Modus ändern (Konvertierungen können
     # das ICC-Profil aus .info verlieren).
     icc = img.info.get("icc_profile")
+    if img.mode in ("RGBa", "La"):
+        img = img.convert("RGBA" if img.mode == "RGBa" else "LA")
 
     # Transparenz-Schlüsselwerte (z. B. PNG tRNS in RGB-, L- oder P-Modus)
     # vor der Profilumrechnung und dem Entfernen der Metadaten in einen
@@ -601,15 +625,21 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None) -> I
                 raise ValueError("Ungültiger ICC-Datentyp")
             src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
             srgb_profile = ImageCms.createProfile("sRGB")
-            # Paletten sind eine Kodierung, kein ICC-Eingabefarbraum. Alpha
-            # bleibt bis zum anschließenden Zusammensetzen mit Weiß erhalten.
+            # Ein Grauprofil benötigt L als Eingang; LA kann LittleCMS nicht
+            # direkt nach RGBA umrechnen. Alpha getrennt unverändert erhalten.
             profile_image = img
+            alpha = None
+            if img.mode == "LA":
+                alpha = img.getchannel("A")
+                profile_image = img.getchannel("L")
             if img.mode == "P":
                 profile_image = img.convert("RGBA" if "transparency" in img.info else "RGB")
             output_mode = "RGBA" if "A" in profile_image.getbands() else "RGB"
             img = ImageCms.profileToProfile(
                 profile_image, src_profile, srgb_profile, outputMode=output_mode
             )
+            if alpha is not None:
+                img.putalpha(alpha)
         except (ImageCms.PyCMSError, OSError, ValueError) as exc:
             raise ImageInputError(
                 "invalid_color_profile",
@@ -617,15 +647,20 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None) -> I
                 "Eine verlässliche Umrechnung nach sRGB ist nicht möglich.",
             ) from exc
 
-    # 3) Transparenz auf weißem Grund flachlegen (JPEG kennt kein Alpha).
+    # 3) Alpha ausdrücklich erhalten oder vor der Skalierung zusammensetzen.
     if "A" in img.getbands() or img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         img = img.convert("RGBA")
+        if options.preserve_alpha:
+            img.info = {}
+            return img
         if notices is not None and img.getchannel("A").getextrema()[0] < 255:
             notices.append({
                 "code": "transparency_flattened",
-                "message": "Transparenz wurde auf weißem Hintergrund entfernt.",
+                "message": ("Transparenz wurde auf weißem Hintergrund entfernt."
+                            if options.background == "#FFFFFF" else
+                            f"Transparenz wurde auf Hintergrund {options.background} entfernt."),
             })
-        background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        background = Image.new("RGBA", img.size, options.background)
         img = Image.alpha_composite(background, img).convert("RGB")
     elif img.mode != "RGB":
         img = img.convert("RGB")
@@ -680,7 +715,7 @@ def _prepare_for_preset(
     # Umwandlung erzeugt wirklich ein Paletten-PNG mit höchstens 256 Farben.
     quantized = img.quantize(
         colors=palette_colors,
-        method=Image.Quantize.MEDIANCUT,
+        method=Image.Quantize.FASTOCTREE if img.mode == "RGBA" else Image.Quantize.MEDIANCUT,
         dither=Image.Dither.FLOYDSTEINBERG,
     )
     quantized.info = {}
@@ -694,6 +729,8 @@ def empty_result(src: Path, codec_name: str, preset_name: str) -> dict:
         "codec": codec_name, "preset": preset_name, "quality": None,
         "max_edge": None, "error": None, "status": "error",
         "error_code": None, "warnings": [],
+        "source_width": None, "source_height": None, "output_width": None,
+        "output_height": None, "resized": False, "alpha_preserved": False,
     }
 
 
@@ -705,10 +742,13 @@ def _process_one(
     *,
     fixed_quality: int | None = None,
     on_event: Callable[[str, dict | None], None] | None = None,
+    options: ImageOptions = ImageOptions(),
 ) -> dict:
     """Gemeinsame Lade-, Normalisierungs-, Speicher- und Fehlerpipeline."""
     result = empty_result(src, codec.name, preset_name)
     try:
+        if options.preserve_alpha and codec.name == "jpeg":
+            raise ImageInputError("unsupported_alpha", "JPEG kann keine Transparenz erhalten. PNG, AVIF oder WebP wählen.")
         if not src.is_file():
             raise ImageInputError("source_not_found", "Datei nicht gefunden")
 
@@ -724,7 +764,14 @@ def _process_one(
                     "Animationen und Mehrbilddateien werden nicht in ein Einzelbild umgewandelt.",
                 )
             opened.load()
-            img = normalize_image(opened, notices=result["warnings"])
+            img = normalize_image(opened, notices=result["warnings"], options=options)
+
+        result["source_width"], result["source_height"] = img.size
+        if options.max_edge and max(img.size) > options.max_edge:
+            img.thumbnail((options.max_edge, options.max_edge), Image.Resampling.LANCZOS)
+            result["resized"] = True
+        result["output_width"], result["output_height"] = img.size
+        result["alpha_preserved"] = options.preserve_alpha and "A" in img.getbands()
 
         max_edge = max(img.size)
         result["max_edge"] = max_edge
@@ -804,9 +851,10 @@ def process_one(
     preset_name: str,
     name_suffix: str,
     *, on_event: Callable[[str, dict | None], None] | None = None,
+    options: ImageOptions = ImageOptions(),
 ) -> dict:
     """Verarbeitet ein einzelnes Bild und liefert auch Fehler strukturiert."""
-    return _process_one(src, codec, preset_name, name_suffix, on_event=on_event)
+    return _process_one(src, codec, preset_name, name_suffix, on_event=on_event, options=options)
 
 
 def quality_label(codec_name: str, preset_name: str, quality: int | None) -> str:
@@ -845,14 +893,20 @@ def format_line(r: dict) -> str:
     arrow = "−" if saved >= 0 else "+"
     # Codec/Preset-Anzeige kompakt: "jpeg:hoch" oder "png:verlustfrei" oder "avif:auto"
     quality_part = quality_label(r["codec"], r["preset"], r["quality"])
+    dimensions = (f"{r['output_width']}×{r['output_height']}px" if r.get("output_width")
+                  else f"{r['max_edge']}px")
+    if r.get("resized"):
+        dimensions = f"{r['source_width']}×{r['source_height']}→{dimensions}"
     line = (
         f"  ✓ {name} -> {Path(r['target']).name} "
-        f"[{r['codec']}:{r['preset']} {r['max_edge']}px {quality_part}] "
+        f"[{r['codec']}:{r['preset']} {dimensions} {quality_part}] "
         f"{human_size(r['src_bytes'])} -> {human_size(r['out_bytes'])} "
         f"({arrow}{abs(pct):.0f}%)"
     )
     for notice in r.get("warnings", []):
         line += f"\n    ⚠ {notice['message']}"
+    if r.get("alpha_preserved"):
+        line += " · Transparenz erhalten"
     return line
 
 
@@ -915,26 +969,41 @@ SETTINGS_PATH = SETTINGS_DIR / "settings.json"
 DEFAULT_SETTINGS = {
     "codec": "jpeg",
     "preset": "hoch",
+    "max_edge": 0,
+    "preserve_alpha": False,
+    "background": "#FFFFFF",
 }
 
 
+def validated_settings(data: dict) -> dict:
+    settings = dict(DEFAULT_SETTINGS)
+    codec = data.get("codec")
+    if not isinstance(codec, str) or codec not in CODECS:
+        return settings
+    settings["codec"] = codec
+    preset = data.get("preset")
+    valid = {p.name for p in CODECS[codec].presets}
+    settings["preset"] = preset if isinstance(preset, str) and preset in valid else CODECS[codec].default_preset
+    for key in ("max_edge", "preserve_alpha", "background"):
+        try:
+            options = ImageOptions(**{key: data.get(key, DEFAULT_SETTINGS[key])})
+        except ValueError:
+            continue
+        settings[key] = getattr(options, key)
+    if codec == "jpeg":
+        settings["preserve_alpha"] = False
+    return settings
+
+
 def load_settings() -> dict:
-    """Lädt nur ein typfestes, codec-gültiges Settings-Paar."""
+    """Lädt gültige Optionen; alte Dateien erhalten Defaults ohne Schreibzugriff."""
     try:
         with SETTINGS_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return dict(DEFAULT_SETTINGS)
 
-        codec = data.get("codec")
-        if not isinstance(codec, str) or codec not in CODECS:
-            return dict(DEFAULT_SETTINGS)
-
-        preset = data.get("preset")
-        valid = {p.name for p in CODECS[codec].presets}
-        if not isinstance(preset, str) or preset not in valid:
-            preset = CODECS[codec].default_preset
-        return {"codec": codec, "preset": preset}
+        return validated_settings(data)
     except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeError):
         return dict(DEFAULT_SETTINGS)
 
@@ -946,7 +1015,7 @@ def save_settings(settings: dict) -> None:
     # codereview-ok: SETTINGS_PATH konstant, .tmp im selben Verzeichnis, os.replace atomar (2026-07-01)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(settings, f, ensure_ascii=False, indent=2)
+        json.dump(validated_settings(settings), f, ensure_ascii=False, indent=2)
     os.replace(tmp, SETTINGS_PATH)
 
 
@@ -960,6 +1029,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"jpegdrop {__version__}")
     parser.add_argument("paths", nargs="*", help="Bilddateien (HEIC/PNG/JPG/TIFF/WEBP/AVIF ...)")
+    parser.add_argument("--max-edge", type=int, metavar="PIXEL", help="Längere Kante begrenzen, niemals vergrößern; 0 = Originalgröße.")
+    alpha = parser.add_mutually_exclusive_group()
+    alpha.add_argument("--preserve-alpha", dest="preserve_alpha", action="store_true", default=None,
+                       help="Transparenz für PNG, AVIF oder WebP erhalten.")
+    alpha.add_argument("--flatten-alpha", dest="preserve_alpha", action="store_false",
+                       help="Transparenz auf die Hintergrundfarbe legen.")
+    parser.add_argument("--background", metavar="#RRGGBB", help="Opake sRGB-Hintergrundfarbe beim Entfernen von Transparenz.")
     parser.add_argument(
         "-c",
         "--codec",
@@ -1071,6 +1147,18 @@ def main(argv: list[str] | None = None) -> int:
         # Preset-Existenz prüfen (gibt auch saubere Fehlermeldung)
         get_preset(codec, preset_name)
 
+    if args.preserve_alpha and codec.name == "jpeg":
+        parser.error("JPEG kann keine Transparenz erhalten. PNG, AVIF oder WebP wählen.")
+    try:
+        options = ImageOptions(
+            max_edge=settings["max_edge"] if args.max_edge is None else args.max_edge,
+            preserve_alpha=(settings["preserve_alpha"] if args.preserve_alpha is None else args.preserve_alpha)
+                           and codec.name != "jpeg",
+            background=settings["background"] if args.background is None else args.background,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+
     suffix_bytes = len(args.suffix.encode("utf-8", "surrogateescape"))
     extension_bytes = len(codec.extension.encode("utf-8"))
     min_collision_bytes = len("-2")
@@ -1125,9 +1213,11 @@ def main(argv: list[str] | None = None) -> int:
             emit("image_started", index=index, total=len(args.paths), source=p)
             if args.quality is not None:
                 r = process_one_with_fixed_quality(Path(p), args.quality, args.suffix,
+                                                   options=options,
                                                    on_event=image_event if args.events else None)
             else:
                 r = process_one(Path(p), codec, preset_name, args.suffix,
+                                options=options,
                                 on_event=image_event if args.events else None)
             if not args.events:
                 results.append(r)
@@ -1154,6 +1244,7 @@ def main(argv: list[str] | None = None) -> int:
 def process_one_with_fixed_quality(
     src: Path, quality: int, name_suffix: str,
     *, on_event: Callable[[str, dict | None], None] | None = None,
+    options: ImageOptions = ImageOptions(),
 ) -> dict:
     """Legacy: --quality N ist äquivalent zu --codec jpeg mit fester q.
     Bewahrt die alte -q/--quality Semantik (eine q für alle Bilder)."""
@@ -1165,6 +1256,7 @@ def process_one_with_fixed_quality(
         name_suffix,
         fixed_quality=quality,
         on_event=on_event,
+        options=options,
     )
 
 

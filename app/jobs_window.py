@@ -22,8 +22,16 @@ def result_detail(result: dict) -> str:
     if result.get("error"):
         return result["error"]
     warnings = " ".join(w["message"] for w in result.get("warnings", []))
-    return warnings or (f"{jpegdrop.human_size(result['out_bytes'])} · {Path(result['target']).name}"
-                        if result.get("target") else "")
+    detail = warnings or (f"{jpegdrop.human_size(result['out_bytes'])} · {Path(result['target']).name}"
+                          if result.get("target") else "")
+    if result.get("output_width"):
+        dimensions = f"{result['output_width']} × {result['output_height']} px"
+        if result.get("resized"):
+            dimensions = f"{result['source_width']} × {result['source_height']} → {dimensions}"
+        detail = f"{dimensions} · {detail}"
+        if result.get("alpha_preserved"):
+            detail += " · Transparenz erhalten"
+    return detail
 
 
 class JobsWindowController(F.NSObject):

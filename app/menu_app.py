@@ -132,6 +132,11 @@ class SettingsWindowController(NSObject):
         self._update_controller = None
         self._automatic_checks = None
         self._update_info = None
+        self._max_edge = None
+        self._preserve_alpha = None
+        self._background = None
+        self._image_info = None
+        self._validation_error = None
         # Interne Codec-Namen, Index-gekoppelt zu den Popup-Labels (s. _populate).
         self._codec_names = None
         # Callback des AppDelegate: wird nach erfolgreichem Speichern gerufen,
@@ -164,6 +169,13 @@ class SettingsWindowController(NSObject):
         # _refresh_presets füllt das Preset-Popup UND wählt das gespeicherte
         # Preset direkt aus — keine zweite Auswahl-Schleife nötig.
         self._refresh_presets(None)
+        self._max_edge.setStringValue_(str(s["max_edge"]))
+        self._preserve_alpha.setState_(AppKit.NSControlStateValueOn if s["preserve_alpha"] else AppKit.NSControlStateValueOff)
+        color = s["background"]
+        self._background.setColor_(AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(
+            int(color[1:3], 16) / 255, int(color[3:5], 16) / 255, int(color[5:7], 16) / 255, 1))
+        self._validation_error.setHidden_(True)
+        self._refresh_image_options()
         updates = self._update_controller
         available = updates is not None and updates.available
         self._automatic_checks.setEnabled_(available)
@@ -173,6 +185,7 @@ class SettingsWindowController(NSObject):
             "Die Suche lädt den Update-Feed. Installiert wird nach Ihrer Bestätigung, "
             "sobald alle aktiven Aufträge fertig sind."
             if available else (updates.problem if updates else "Updates sind nicht verfügbar."))
+        self._window.setContentSize_(self._window.contentView().fittingSize())
 
     def _selected_codec_name(self):
         """Interner Codec-Name ("jpeg", …) des gewählten Popup-Eintrags."""
@@ -199,10 +212,12 @@ class SettingsWindowController(NSObject):
         codec_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
             NSMakeRect(0, 0, 200, 25), False
         )
+        codec_popup.setAccessibilityLabel_("Ziel-Codec")
         preset_label = NSTextField.labelWithString_("Qualitäts-Preset:")
         preset_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
             NSMakeRect(0, 0, 320, 25), False
         )
+        preset_popup.setAccessibilityLabel_("Qualitäts-Preset")
         grid = AppKit.NSGridView.gridViewWithViews_(
             [[codec_label, codec_popup], [preset_label, preset_popup]]
         )
@@ -223,6 +238,36 @@ class SettingsWindowController(NSObject):
         info.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         info.setFont_(AppKit.NSFont.systemFontOfSize_(AppKit.NSFont.smallSystemFontSize()))
         info.setPreferredMaxLayoutWidth_(440)
+
+        image_separator = AppKit.NSBox.alloc().init()
+        image_separator.setBoxType_(AppKit.NSBoxSeparator)
+        max_edge = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 120, 24))
+        max_edge.setAccessibilityLabel_("Maximale Bildkante")
+        max_edge.widthAnchor().constraintEqualToConstant_(120).setActive_(True)
+        edge_row = NSStackView.stackViewWithViews_([
+            max_edge, NSTextField.labelWithString_("Pixel · 0 = Originalgröße")])
+        edge_row.setSpacing_(10)
+        preserve = NSButton.checkboxWithTitle_target_action_("Transparenz erhalten", self, "imageOptionsChanged:")
+        background = AppKit.NSColorWell.alloc().initWithFrame_(NSMakeRect(0, 0, 60, 26))
+        background.setAccessibilityLabel_("Hintergrundfarbe")
+        background.widthAnchor().constraintEqualToConstant_(60).setActive_(True)
+        background.heightAnchor().constraintEqualToConstant_(26).setActive_(True)
+        image_grid = AppKit.NSGridView.gridViewWithViews_([
+            [NSTextField.labelWithString_("Längere Kante:"), edge_row],
+            [NSTextField.labelWithString_("Transparenz:"), preserve],
+            [NSTextField.labelWithString_("Hintergrund:"), background],
+        ])
+        image_grid.setRowSpacing_(10)
+        image_grid.setColumnSpacing_(10)
+        image_grid.columnAtIndex_(0).setXPlacement_(AppKit.NSGridCellPlacementTrailing)
+        image_info = NSTextField.wrappingLabelWithString_("")
+        image_info.setTextColor_(AppKit.NSColor.secondaryLabelColor())
+        image_info.setFont_(AppKit.NSFont.systemFontOfSize_(AppKit.NSFont.smallSystemFontSize()))
+        image_info.setPreferredMaxLayoutWidth_(440)
+        validation = NSTextField.wrappingLabelWithString_("")
+        validation.setTextColor_(AppKit.NSColor.systemRedColor())
+        validation.setPreferredMaxLayoutWidth_(440)
+        validation.setHidden_(True)
 
         separator = AppKit.NSBox.alloc().init()
         separator.setBoxType_(AppKit.NSBoxSeparator)
@@ -252,9 +297,13 @@ class SettingsWindowController(NSObject):
         content.setSpacing_(16)
         content.addArrangedSubview_(grid)
         content.addArrangedSubview_(info)
+        content.addArrangedSubview_(image_separator)
+        content.addArrangedSubview_(image_grid)
+        content.addArrangedSubview_(image_info)
         content.addArrangedSubview_(separator)
         content.addArrangedSubview_(automatic)
         content.addArrangedSubview_(update_info)
+        content.addArrangedSubview_(validation)
         content.addArrangedSubview_(button_row)
 
         cv = win.contentView()
@@ -272,6 +321,8 @@ class SettingsWindowController(NSObject):
         separator.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
         update_info.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
         button_row.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
+        for view in (image_separator, image_info, validation):
+            view.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
 
         # Fensterhöhe aus dem Inhalt ableiten statt fixer Leere darunter.
         win.setContentSize_(cv.fittingSize())
@@ -286,10 +337,31 @@ class SettingsWindowController(NSObject):
         self._preset_popup = preset_popup
         self._automatic_checks = automatic
         self._update_info = update_info
+        self._max_edge = max_edge
+        self._preserve_alpha = preserve
+        self._background = background
+        self._image_info = image_info
+        self._validation_error = validation
 
     # Objective-C Selectors -------------------------------------------------
     def codecChanged_(self, sender):
         self._refresh_presets(sender)
+        self._refresh_image_options()
+
+    def imageOptionsChanged_(self, sender):
+        self._refresh_image_options()
+
+    def _refresh_image_options(self):
+        jpeg = self._selected_codec_name() == "jpeg"
+        self._preserve_alpha.setEnabled_(not jpeg)
+        if jpeg:
+            self._preserve_alpha.setState_(AppKit.NSControlStateValueOff)
+        preserved = self._preserve_alpha.state() == AppKit.NSControlStateValueOn
+        self._background.setEnabled_(not preserved)
+        self._image_info.setStringValue_(
+            "JPEG entfernt Transparenz mit der gewählten Hintergrundfarbe. Bilder werden niemals vergrößert."
+            if jpeg else "Transparenz optional erhalten; sonst wird die Hintergrundfarbe verwendet. Bilder werden niemals vergrößert.")
+        self._window.setContentSize_(self._window.contentView().fittingSize())
 
     def _refresh_presets(self, _sender):
         codec_name = self._selected_codec_name()
@@ -315,7 +387,23 @@ class SettingsWindowController(NSObject):
         if codec_name and preset_title:
             # "name — label" -> "name"
             preset_name = preset_title.split(" — ", 1)[0].strip()
-            jpegdrop.save_settings({"codec": codec_name, "preset": preset_name})
+            try:
+                edge = self._max_edge.stringValue().strip()
+                if not edge.isascii() or not edge.isdecimal():
+                    raise ValueError("Die maximale Bildkante muss eine ganze Zahl ab 0 sein.")
+                color = self._background.color().colorUsingColorSpace_(AppKit.NSColorSpace.sRGBColorSpace())
+                background = "#" + "".join(f"{round(max(0, min(1, c)) * 255):02X}"
+                    for c in (color.redComponent(), color.greenComponent(), color.blueComponent()))
+                options = jpegdrop.ImageOptions(int(edge),
+                    self._preserve_alpha.state() == AppKit.NSControlStateValueOn, background)
+                jpegdrop.save_settings({"codec": codec_name, "preset": preset_name,
+                    "max_edge": options.max_edge, "preserve_alpha": options.preserve_alpha,
+                    "background": options.background})
+            except (ValueError, OSError) as error:
+                self._validation_error.setStringValue_(str(error))
+                self._validation_error.setHidden_(False)
+                self._window.setContentSize_(self._window.contentView().fittingSize())
+                return
             if self._update_controller is not None:
                 self._update_controller.set_automatic_checks(
                     self._automatic_checks.state() == AppKit.NSControlStateValueOn)

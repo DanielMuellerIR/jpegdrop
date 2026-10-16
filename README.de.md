@@ -35,17 +35,23 @@ keine HEIC-Dateien.
 - EXIF-Orientierung wird eingerechnet, bevor eingebettete EXIF-/GPS-/ICC-Daten entfernt werden.
 - Unterstützte Farbprofile werden nach sRGB umgerechnet. Ungültige oder nicht
   zum Bild passende Profile führen zu einem Fehler statt zu ungeprüfter Ausgabe.
-- Transparenz wird derzeit bei jedem Ziel-Codec auf Weiß gelegt. Eine Warnung
-  nennt Bilder, bei denen transparente Pixel betroffen waren.
+- PNG, AVIF und WebP können Transparenz erhalten. Standardmäßig wird sie auf
+  Weiß gelegt; die Hintergrundfarbe lässt sich in den Einstellungen wählen.
+  JPEG entfernt Transparenz immer. Eine Warnung nennt betroffene Bilder.
+- Eine maximale Bildkante verkleinert optional proportional mit Lanczos, nach
+  dem Einrechnen der Orientierung. Kleine Bilder werden niemals vergrößert.
 - Animationen und Mehrbilddateien werden abgewiesen. Das erste Bild wird nicht
   unbemerkt als Einzelbild exportiert.
 - Dateinamen, Dateisystem-Zeitstempel und sichtbare Bildinhalte werden nicht anonymisiert.
 
 JPEG, AVIF und WebP bieten sechs feste Qualitätsstufen sowie **auto**. Auto passt
-die Qualität an die längere Bildkante an, nicht seine Abmessungen.
+die Qualität an die längere Kante des vorbereiteten Bildes an, nach optionaler Verkleinerung.
 PNG bietet verlustfreie Kodierung oder eine reduzierte Palette mit 256 Farben.
-„Verlustfrei“ beschreibt die PNG-Kodierung nach RGB-/sRGB-Umrechnung und dem
-Entfernen von Transparenz; diese Vorbereitung kann die Quellpixel ändern.
+„Verlustfrei“ beschreibt die PNG- oder WebP-Kodierung nach den gewählten Farb-,
+Transparenz- und Größenoptionen; diese Vorbereitung kann die Quellpixel ändern.
+WebP bietet ein echtes verlustfreies Preset, das alle vorbereiteten Pixel auch
+in transparenten Bereichen erhält. Das PNG-Preset mit 256 Farben kann Farb-
+und Alphastufen reduzieren.
 Auch das höchste JPEG-Preset arbeitet verlustbehaftet. Schon optimierte Bilder
 können größer werden; Dateigrößen und Warnungen werden entsprechend angezeigt.
 
@@ -86,6 +92,7 @@ Aus einem Quellcheckout mit installierten Abhängigkeiten:
 ```sh
 .venv/bin/python jpegdrop.py --codec avif --preset mittel foto.heic
 .venv/bin/python jpegdrop.py --json --codec jpeg foto.png
+.venv/bin/python jpegdrop.py --codec webp --preset verlustfrei --preserve-alpha --max-edge 1600 foto.png
 .venv/bin/python jpegdrop.py --list-presets
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
@@ -97,7 +104,10 @@ Auch die heruntergeladene App enthält eine headless nutzbare CLI:
   "/Applications/JPEGdrop.app/Contents/Resources/jpegdrop.py" --json foto.heic
 ```
 
-Ohne explizite Codec-/Preset-Flags gelten die gespeicherten App-Einstellungen.
+Ohne explizite Optionsflags gelten die gespeicherten App-Einstellungen.
+`--max-edge 0` deaktiviert eine gespeicherte Größenbegrenzung. `--flatten-alpha`
+überschreibt gespeicherte Alpha-Erhaltung, `--background '#123456'` wählt einen
+opaken sRGB-Hintergrund.
 `--suffix` ändert das Standardsuffix `-klein` bei Quellen, die schon im Ziel-Codec
 vorliegen. `-q/--quality` bleibt für JPEG mit fester Qualität verfügbar.
 Der Exit-Status ist die Anzahl Fehler, begrenzt auf 125; null bedeutet Erfolg.

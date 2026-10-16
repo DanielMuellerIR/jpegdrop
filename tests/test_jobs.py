@@ -29,6 +29,35 @@ def wait_for(predicate, seconds=6):
 
 
 class JobsTests(unittest.TestCase):
+    def test_queued_image_options_are_independent_of_changed_settings(self):
+        wrapper = self.wrapper('''
+import time
+while not (__import__('pathlib').Path(sys.argv[-1]).parent/'release').exists(): time.sleep(.01)
+raise SystemExit(jpegdrop.main())
+''')
+        first = self.image("first.png", "RGBA")
+        second = self.image("second.png", "RGBA")
+        for source in (first, second):
+            Image.new("RGBA", (48, 48), (200, 100, 50, 64)).save(source)
+        settings = {"codec": "webp", "preset": "verlustfrei", "max_edge": 24,
+                    "preserve_alpha": True, "background": "#123456"}
+        manager = self.manager(wrapper)
+        manager.submit([str(first)], settings)
+        wait_for(lambda: manager.snapshot()[1][0].pid is not None)
+        manager.submit([str(second)], settings)
+        settings.update(max_edge=1, preserve_alpha=False, background="#FFFFFF")
+        self.assertEqual(manager.snapshot()[1][1].state, "queued")
+        (self.root/'release').touch()
+        wait_for(lambda: not manager.has_active_jobs)
+        for job in manager.snapshot()[1]:
+            self.assertEqual(job.state, "completed", job.problem)
+            self.assertEqual(job.options.max_edge, 24)
+            self.assertTrue(job.options.preserve_alpha)
+            self.assertEqual(job.options.background, "#123456")
+            with Image.open(job.targets[0]) as output:
+                self.assertEqual(output.size, (24, 24))
+                self.assertEqual(output.mode, "RGBA")
+
     def test_external_python_paths_cannot_replace_conversion_dependencies(self):
         from unittest.mock import patch
         poison = self.root / "external" / "PIL"

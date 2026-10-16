@@ -352,6 +352,7 @@ def test_settings_codec_switch_selects_and_saves_compatible_preset():
     ]
     try:
         for settings, target_codec, expected in cases:
+            settings = {**jpegdrop.DEFAULT_SETTINGS, **settings}
             with mock.patch.object(jpegdrop, "load_settings", return_value=settings), \
                     mock.patch.object(jpegdrop, "save_settings") as save:
                 controller._populate_from_settings()
@@ -361,7 +362,7 @@ def test_settings_codec_switch_selects_and_saves_compatible_preset():
                 title = controller._preset_popup.titleOfSelectedItem()
                 assert title.split(" — ", 1)[0] == expected, title
                 controller.saveAndClose_(None)
-                save.assert_called_once_with({"codec": target_codec, "preset": expected})
+                save.assert_called_once_with({**jpegdrop.DEFAULT_SETTINGS, "codec": target_codec, "preset": expected})
     finally:
         if controller._window is not None:
             controller._window.orderOut_(None)

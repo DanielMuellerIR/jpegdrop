@@ -30,6 +30,7 @@ class Job:
     paths: tuple[str, ...]
     codec: str
     preset: str
+    options: jpegdrop.ImageOptions = field(default_factory=jpegdrop.ImageOptions)
     state: str = "queued"
     results: list[dict] = field(default_factory=list)
     current: str | None = None
@@ -99,6 +100,9 @@ class JobManager:
             raise ValueError("Der Auftrag enthält keine Dateien.")
         codec = jpegdrop.get_codec(settings["codec"])
         preset = jpegdrop.get_preset(codec, settings["preset"])
+        options = jpegdrop.ImageOptions.from_settings(settings)
+        if codec.name == "jpeg" and options.preserve_alpha:
+            raise ValueError("JPEG kann keine Transparenz erhalten.")
         with self._condition:
             if self._closing:
                 raise ValueError("JPEGdrop wird beendet und nimmt keine Aufträge mehr an.")
@@ -108,7 +112,7 @@ class JobManager:
                 raise ValueError(f"Die Warteschlange ist voll ({self.max_active} aktive Aufträge).")
             self._number += 1
             job = Job(uuid.uuid4().hex, self._number, tuple(os.path.abspath(p) for p in paths),
-                      codec.name, preset.name)
+                      codec.name, preset.name, options=options)
             for path, reason in (skipped or {}).items():
                 result = jpegdrop.empty_result(Path(os.path.abspath(path)), codec.name, preset.name)
                 result.update(status="skipped", error_code="unsupported_input", skip_reason=reason)
@@ -245,7 +249,9 @@ class JobManager:
 
     def _run(self, job: Job) -> None:
         cmd = [self.python, "-I", "-B", self.script, "--codec", job.codec,
-               "--preset", job.preset, "--events", "--", *job.paths]
+               "--preset", job.preset, "--max-edge", str(job.options.max_edge),
+               "--preserve-alpha" if job.options.preserve_alpha else "--flatten-alpha",
+               "--background", job.options.background, "--events", "--", *job.paths]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", JPEGDROP_JOB_ID=job.id)
         with self._condition:
             if job.cancel_requested:

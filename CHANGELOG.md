@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.0 — 2026-10-16
+
+- Proportional maximum-edge resizing without upscaling, after EXIF orientation.
+- Optional PNG, AVIF and WebP transparency; configurable opaque sRGB background.
+- True lossless WebP, including prepared pixels in fully transparent areas.
+- Complete immutable image-option snapshots for queued jobs.
+- Source/output dimensions and alpha handling in CLI and job results.
+- Native image settings with input validation and compatible defaults.
+
 ## 2.6.3 — 2026-10-16
 
 - Installation waits for native JPEGdrop processes before exchanging the app.
