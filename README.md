@@ -2,14 +2,14 @@
 
 **🌐 Sprache / Language:** [English](README.md) · [Deutsch](README.de.md)
 
-JPEGdrop converts images dropped onto its macOS Dock icon into smaller, metadata-free JPEG, PNG, AVIF or WebP copies beside the originals.
+JPEGdrop converts images dropped onto its macOS Dock icon into smaller, metadata-free JPEG, PNG, AVIF or WebP copies, by default beside the originals.
 
 ## Install and use
 
 1. Download the DMG from [Releases](https://github.com/danielmuellerir/jpegdrop/releases).
 2. Drag JPEGdrop to Applications and open it. Python and Homebrew are not required.
 3. Choose a codec and preset from the **JD** menu or **Einstellungen…** (⌘,).
-4. Drop images onto the app's Dock or Finder icon.
+4. Drop images or folders onto the app's Dock or Finder icon.
 
 The interface currently uses German labels. The default is **JPEG · hoch**
 (quality 85). JPEGdrop builds for Apple Silicon only. The bundle declares macOS
@@ -53,6 +53,28 @@ preset that preserves all prepared pixels, including transparent ones. The
 lossy encoding. An already optimized image may become larger; sizes and warnings
 are reported honestly.
 
+## Folders and output location
+
+Folder drops include images from the top level. Enable **Unterordner einbeziehen**
+to include nested folders. JPEGdrop inventories the input before conversion,
+skips symbolic links, duplicate files, app packages and managed photo libraries,
+and reports unsupported entries. Limits are 10,000 images and at most 50,000
+examined files/directories; exceeding a limit stops before any conversion.
+
+Choose the output location in Settings:
+
+| Setting | Example for `Album/nested/photo.png` converted to JPEG |
+|---|---|
+| Beside the source (default) | `Album/nested/photo.jpg` |
+| Output subfolder `JPEGdrop` | `Album/JPEGdrop/nested/photo.jpg` |
+| Chosen directory `Exports` | `Exports/Album/nested/photo.jpg` |
+
+Individual files go directly into the chosen directory, or a subfolder of their
+source directory. Folder structure is retained. A chosen output directory inside
+the input tree is excluded from scanning. Existing images elsewhere in the tree
+remain valid inputs, including previous conversions. Collisions receive a counter;
+no source or existing output is overwritten. Overlapping inputs use the first occurrence.
+
 ## Jobs, progress and cancellation
 
 **Aufträge…** (⌘0) opens the job list with progress, current filenames, results,
@@ -65,7 +87,8 @@ outputs are removed. **Erzeugte Dateien im Finder** selects the existing outputs
 of the chosen job, including partial successes. Quitting asks before cancelling
 active jobs and waits for their encoder processes to finish. A forced system
 kill cannot guarantee cleanup. The list keeps up to 50 completed jobs during
-the current session and is cleared on restart.
+the current session and is cleared on restart. Large inventories evict older
+jobs earlier; the latest job remains complete.
 
 ## Updates and privacy
 
@@ -88,6 +111,8 @@ From a source checkout with the dependencies installed:
 .venv/bin/python jpegdrop.py --codec avif --preset mittel photo.heic
 .venv/bin/python jpegdrop.py --json --codec jpeg photo.png
 .venv/bin/python jpegdrop.py --codec webp --preset verlustfrei --preserve-alpha --max-edge 1600 photo.png
+.venv/bin/python jpegdrop.py --recursive --output-dir Exports --codec jpeg Album
+.venv/bin/python jpegdrop.py --output-subdir JPEGdrop --codec webp photo.png
 .venv/bin/python jpegdrop.py --list-presets
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
@@ -105,6 +130,12 @@ alpha preservation, and `--background '#123456'` sets an opaque sRGB background.
 `--suffix` changes the default `-klein` suffix for sources already in the target
 codec. `-q/--quality` retains fixed-quality JPEG compatibility. The exit status
 is the number of errors, capped at 125; zero means success.
+
+`--no-recursive` and `--beside` override saved folder/output choices. For large
+file lists, `--input-plan plan.json` accepts a JSON array of objects with absolute
+`source` and absolute-or-null `output_directory` paths. It replaces positional
+paths, recursion and output flags; image options still apply. Plans are limited
+to 10,000 files and 32 MiB.
 
 Versions without the update menu need one manual installation of the current DMG.
 

@@ -12,6 +12,36 @@ from app.menu_app import SettingsWindowController
 
 
 class SettingsWindowTests(unittest.TestCase):
+    def test_output_modes_validate_active_fields_preserve_directory_and_cancel(self):
+        A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyProhibited)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(jpegdrop, "SETTINGS_DIR", Path(directory)), \
+                patch.object(jpegdrop, "SETTINGS_PATH", Path(directory) / "settings.json"):
+            saved = {**jpegdrop.DEFAULT_SETTINGS, "recursive": True, "output_mode": "directory",
+                     "output_directory": str(Path(directory)/"output")}
+            jpegdrop.save_settings(saved)
+            original = jpegdrop.SETTINGS_PATH.read_bytes()
+            controller = SettingsWindowController.alloc().init()
+            try:
+                controller._populate_from_settings()
+                self.assertTrue(controller._output_choose.isEnabled())
+                self.assertFalse(controller._output_subdir.isEnabled())
+                controller._output_mode.selectItemAtIndex_(1); controller.outputModeChanged_(None)
+                controller._output_subdir.setStringValue_("../outside")
+                controller.saveAndClose_(None)
+                self.assertEqual(jpegdrop.SETTINGS_PATH.read_bytes(), original)
+                self.assertFalse(controller._validation_error.isHidden())
+                controller._output_mode.selectItemAtIndex_(0); controller.outputModeChanged_(None)
+                self.assertFalse(controller._output_choose.isEnabled())
+                controller.saveAndClose_(None)
+                self.assertEqual(jpegdrop.load_settings(), {**saved, "output_mode": "beside"})
+                controller._populate_from_settings()
+                controller._recursive.setState_(A.NSControlStateValueOff)
+                controller.close_(None); controller._populate_from_settings()
+                self.assertEqual(controller._recursive.state(), A.NSControlStateValueOn)
+            finally:
+                controller._window.close()
+
     def test_image_options_validation_cancel_and_codec_state(self):
         A.NSApplication.sharedApplication().setActivationPolicy_(A.NSApplicationActivationPolicyProhibited)
         with tempfile.TemporaryDirectory() as directory, \

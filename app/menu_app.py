@@ -58,6 +58,7 @@ import jpegdrop  # type: ignore  # noqa: E402
 from app.jobs import JobManager
 from app.jobs_window import JobsWindowController
 from app.updates import JDUpdateController
+from app.input_plan import IMAGE_EXTENSIONS, InventoryOptions
 
 
 # Interpreter und Skript für die eigentliche Konvertierung (läuft als eigener
@@ -87,10 +88,9 @@ def _dbg(msg: str) -> None:
 
 _dbg("=== menu_app.py importiert (pid %d) ===" % os.getpid())
 
-# Akzeptierte Eingabe-Bildformate (Pillow/pillow-heif lesen sie). Dient als Filter
+# Akzeptierte Eingabe-Bildformate. Dient als Filter
 # gegen versehentlich gedroppte Nicht-Bilder und gegen die Start-openFiles-Falle.
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff",
-              ".webp", ".avif", ".gif", ".bmp", ".jp2"}
+IMAGE_EXTS = IMAGE_EXTENSIONS
 
 
 # ===========================================================================
@@ -137,6 +137,13 @@ class SettingsWindowController(NSObject):
         self._background = None
         self._image_info = None
         self._validation_error = None
+        self._recursive = None
+        self._output_mode = None
+        self._output_subdir = None
+        self._output_path = None
+        self._output_choose = None
+        self._output_directory_value = ""
+        self._folder_panel = None
         # Interne Codec-Namen, Index-gekoppelt zu den Popup-Labels (s. _populate).
         self._codec_names = None
         # Callback des AppDelegate: wird nach erfolgreichem Speichern gerufen,
@@ -176,6 +183,11 @@ class SettingsWindowController(NSObject):
             int(color[1:3], 16) / 255, int(color[3:5], 16) / 255, int(color[5:7], 16) / 255, 1))
         self._validation_error.setHidden_(True)
         self._refresh_image_options()
+        self._recursive.setState_(AppKit.NSControlStateValueOn if s["recursive"] else AppKit.NSControlStateValueOff)
+        self._output_mode.selectItemAtIndex_(["beside", "subfolder", "directory"].index(s["output_mode"]))
+        self._output_subdir.setStringValue_(s["output_subdir"])
+        self._output_directory_value = s["output_directory"]
+        self._refresh_output_options()
         updates = self._update_controller
         available = updates is not None and updates.available
         self._automatic_checks.setEnabled_(available)
@@ -269,6 +281,38 @@ class SettingsWindowController(NSObject):
         validation.setPreferredMaxLayoutWidth_(440)
         validation.setHidden_(True)
 
+        output_separator = AppKit.NSBox.alloc().init()
+        output_separator.setBoxType_(AppKit.NSBoxSeparator)
+        recursive = NSButton.checkboxWithTitle_target_action_("Unterordner einbeziehen", None, None)
+        output_mode = NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(0, 0, 300, 25), False)
+        output_mode.addItemsWithTitles_(["Neben der Quelle", "Ausgabe-Unterordner", "Gewählter Zielordner"])
+        output_mode.setAccessibilityLabel_("Ausgabeablage")
+        output_mode.setTarget_(self); output_mode.setAction_("outputModeChanged:")
+        output_mode.widthAnchor().constraintGreaterThanOrEqualToConstant_(300).setActive_(True)
+        output_subdir = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 24))
+        output_subdir.setAccessibilityLabel_("Ausgabe-Unterordner")
+        output_subdir.widthAnchor().constraintEqualToConstant_(200).setActive_(True)
+        output_path = NSTextField.labelWithString_("Kein Ordner gewählt")
+        output_path.setLineBreakMode_(AppKit.NSLineBreakByTruncatingMiddle)
+        output_path.widthAnchor().constraintEqualToConstant_(210).setActive_(True)
+        output_path.setAccessibilityLabel_("Gewählter Zielordner")
+        choose = NSButton.buttonWithTitle_target_action_("Ordner wählen…", self, "chooseOutputDirectory:")
+        path_row = NSStackView.stackViewWithViews_([output_path, choose])
+        path_row.setSpacing_(10)
+        output_grid = AppKit.NSGridView.gridViewWithViews_([
+            [NSTextField.labelWithString_("Ausgabe:"), output_mode],
+            [NSTextField.labelWithString_("Unterordner:"), output_subdir],
+            [NSTextField.labelWithString_("Zielordner:"), path_row],
+        ])
+        output_grid.setRowSpacing_(10); output_grid.setColumnSpacing_(10)
+        output_grid.columnAtIndex_(0).setXPlacement_(AppKit.NSGridCellPlacementTrailing)
+        output_info = NSTextField.wrappingLabelWithString_(
+            "Ordner werden vor der Konvertierung eingelesen. In einer anderen Ablage "
+            "bleibt ihre Unterstruktur erhalten; vorhandene Dateien bleiben unverändert.")
+        output_info.setTextColor_(AppKit.NSColor.secondaryLabelColor())
+        output_info.setFont_(AppKit.NSFont.systemFontOfSize_(AppKit.NSFont.smallSystemFontSize()))
+        output_info.setPreferredMaxLayoutWidth_(440)
+
         separator = AppKit.NSBox.alloc().init()
         separator.setBoxType_(AppKit.NSBoxSeparator)
         automatic = NSButton.checkboxWithTitle_target_action_("Automatisch nach Updates suchen", None, None)
@@ -300,6 +344,10 @@ class SettingsWindowController(NSObject):
         content.addArrangedSubview_(image_separator)
         content.addArrangedSubview_(image_grid)
         content.addArrangedSubview_(image_info)
+        content.addArrangedSubview_(output_separator)
+        content.addArrangedSubview_(recursive)
+        content.addArrangedSubview_(output_grid)
+        content.addArrangedSubview_(output_info)
         content.addArrangedSubview_(separator)
         content.addArrangedSubview_(automatic)
         content.addArrangedSubview_(update_info)
@@ -321,7 +369,7 @@ class SettingsWindowController(NSObject):
         separator.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
         update_info.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
         button_row.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
-        for view in (image_separator, image_info, validation):
+        for view in (image_separator, image_info, validation, output_separator, output_info):
             view.widthAnchor().constraintEqualToAnchor_(content.widthAnchor()).setActive_(True)
 
         # Fensterhöhe aus dem Inhalt ableiten statt fixer Leere darunter.
@@ -342,6 +390,11 @@ class SettingsWindowController(NSObject):
         self._background = background
         self._image_info = image_info
         self._validation_error = validation
+        self._recursive = recursive
+        self._output_mode = output_mode
+        self._output_subdir = output_subdir
+        self._output_path = output_path
+        self._output_choose = choose
 
     # Objective-C Selectors -------------------------------------------------
     def codecChanged_(self, sender):
@@ -350,6 +403,44 @@ class SettingsWindowController(NSObject):
 
     def imageOptionsChanged_(self, sender):
         self._refresh_image_options()
+
+    def outputModeChanged_(self, sender):
+        self._refresh_output_options()
+
+    def _refresh_output_options(self):
+        mode = ["beside", "subfolder", "directory"][self._output_mode.indexOfSelectedItem()]
+        if mode != "subfolder":
+            try:
+                InventoryOptions(output_subdir=self._output_subdir.stringValue().strip())
+            except ValueError:
+                self._output_subdir.setStringValue_(jpegdrop.load_settings()["output_subdir"])
+        self._output_subdir.setEnabled_(mode == "subfolder")
+        self._output_choose.setEnabled_(mode == "directory")
+        path = self._output_directory_value
+        home = str(Path.home())
+        display = "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+        self._output_path.setStringValue_(display or "Kein Ordner gewählt")
+        self._output_path.setToolTip_(path or "Bitte einen Zielordner wählen.")
+        self._output_path.setTextColor_(AppKit.NSColor.labelColor() if mode == "directory"
+                                       else AppKit.NSColor.secondaryLabelColor())
+        self._window.setContentSize_(self._window.contentView().fittingSize())
+
+    def chooseOutputDirectory_(self, sender):
+        panel = AppKit.NSOpenPanel.openPanel()
+        panel.setCanChooseFiles_(False); panel.setCanChooseDirectories_(True)
+        panel.setAllowsMultipleSelection_(False); panel.setCanCreateDirectories_(True)
+        panel.setPrompt_("Auswählen")
+        if self._output_directory_value:
+            panel.setDirectoryURL_(Foundation.NSURL.fileURLWithPath_(self._output_directory_value))
+        self._folder_panel = panel
+
+        def completed(response):
+            if response == AppKit.NSModalResponseOK and panel.URL() is not None:
+                self._output_directory_value = str(panel.URL().path())
+                self._refresh_output_options()
+            self._folder_panel = None
+
+        panel.beginSheetModalForWindow_completionHandler_(self._window, completed)
 
     def _refresh_image_options(self):
         jpeg = self._selected_codec_name() == "jpeg"
@@ -396,9 +487,17 @@ class SettingsWindowController(NSObject):
                     for c in (color.redComponent(), color.greenComponent(), color.blueComponent()))
                 options = jpegdrop.ImageOptions(int(edge),
                     self._preserve_alpha.state() == AppKit.NSControlStateValueOn, background)
+                inventory = InventoryOptions(
+                    recursive=self._recursive.state() == AppKit.NSControlStateValueOn,
+                    output_mode=["beside", "subfolder", "directory"][self._output_mode.indexOfSelectedItem()],
+                    output_directory=self._output_directory_value,
+                    output_subdir=self._output_subdir.stringValue().strip(),
+                )
                 jpegdrop.save_settings({"codec": codec_name, "preset": preset_name,
                     "max_edge": options.max_edge, "preserve_alpha": options.preserve_alpha,
-                    "background": options.background})
+                    "background": options.background, "recursive": inventory.recursive,
+                    "output_mode": inventory.output_mode, "output_directory": inventory.output_directory,
+                    "output_subdir": inventory.output_subdir})
             except (ValueError, OSError) as error:
                 self._validation_error.setStringValue_(str(error))
                 self._validation_error.setHidden_(False)
@@ -838,12 +937,12 @@ class AppDelegate(NSObject):
         self._handle_paths(paths, notify_if_empty=True)
 
     def _handle_paths(self, paths, notify_if_empty=False):
-        # Nur existierende BILD-Dateien verarbeiten. Wichtig: die deprecated
+        # Bilddateien und Ordner an den Worker geben. Wichtig: die deprecated
         # `application:openFiles:` feuert beim Start einmal mit dem Skriptpfad
         # (menu_app.py) als vermeintlichem „Dokument" — ohne diesen Filter würde
         # die App beim Start versuchen, ihr eigenes .py zu konvertieren (Fehler).
         real = [p for p in paths
-                if os.path.isfile(p) and Path(p).suffix.lower() in IMAGE_EXTS]
+                if os.path.isdir(p) or (os.path.isfile(p) and Path(p).suffix.lower() in IMAGE_EXTS)]
         if not real:
             # Feedback statt stummem Verschlucken, wenn jemand z.B. ein PDF
             # oder einen Ordner droppt. Doppelter Schutz gegen die Start-
@@ -857,8 +956,7 @@ class AppDelegate(NSObject):
                 )
             return
         try:
-            skipped = {p: ("Ordner werden noch nicht verarbeitet." if os.path.isdir(p)
-                           else "Datei fehlt oder das Format wird vom Droplet nicht unterstützt.")
+            skipped = {p: "Datei fehlt oder das Format wird vom Droplet nicht unterstützt."
                        for p in paths if p not in real}
             self._jobs.submit(real, jpegdrop.load_settings(), skipped=skipped)
         except ValueError as exc:

@@ -12,12 +12,14 @@ import threading
 import time
 import uuid
 import json
+import tempfile
 
 import jpegdrop
+from app.input_plan import InventoryOptions, InventoryCancelled, inventory_inputs
 
-ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
+ACTIVE_STATES = frozenset({"queued", "scanning", "running", "cancelling"})
 STATE_LABELS = {
-    "queued": "Wartend", "running": "Läuft", "cancelling": "Wird abgebrochen …",
+    "queued": "Wartend", "scanning": "Wird eingelesen …", "running": "Läuft", "cancelling": "Wird abgebrochen …",
     "completed": "Abgeschlossen", "partial": "Teilweise fehlgeschlagen",
     "failed": "Fehlgeschlagen", "cancelled": "Abgebrochen",
 }
@@ -31,6 +33,9 @@ class Job:
     codec: str
     preset: str
     options: jpegdrop.ImageOptions = field(default_factory=jpegdrop.ImageOptions)
+    inventory_options: InventoryOptions = field(default_factory=InventoryOptions)
+    input_paths: tuple[str, ...] = ()
+    output_directories: tuple[str | None, ...] = ()
     state: str = "queued"
     results: list[dict] = field(default_factory=list)
     current: str | None = None
@@ -47,8 +52,9 @@ class Job:
 
     @property
     def title(self) -> str:
-        name = Path(self.paths[0]).name
-        extra = f" + {len(self.paths) - 1}" if len(self.paths) > 1 else ""
+        original = self.input_paths or self.paths
+        name = Path(original[0]).name
+        extra = f" + {len(original) - 1}" if len(original) > 1 else ""
         return f"{self.number}: {name}{extra}"
 
     @property
@@ -64,9 +70,10 @@ class JobManager:
     """Ein Worker und höchstens ein CLI-Prozess; Snapshots gehören dem Aufrufer."""
 
     def __init__(self, python: str, script: str, *, max_active: int = 20,
-                 history_limit: int = 50, cancel_grace: float = 2.0):
+                 history_limit: int = 50, history_result_limit: int = 10_000, cancel_grace: float = 2.0):
         self.python, self.script = python, script
         self.max_active, self.history_limit = max_active, history_limit
+        self.history_result_limit = history_result_limit
         self.cancel_grace = cancel_grace
         self._condition = threading.Condition()
         self._jobs: list[Job] = []
@@ -101,6 +108,7 @@ class JobManager:
         codec = jpegdrop.get_codec(settings["codec"])
         preset = jpegdrop.get_preset(codec, settings["preset"])
         options = jpegdrop.ImageOptions.from_settings(settings)
+        inventory_options = InventoryOptions.from_settings(settings)
         if codec.name == "jpeg" and options.preserve_alpha:
             raise ValueError("JPEG kann keine Transparenz erhalten.")
         with self._condition:
@@ -112,7 +120,8 @@ class JobManager:
                 raise ValueError(f"Die Warteschlange ist voll ({self.max_active} aktive Aufträge).")
             self._number += 1
             job = Job(uuid.uuid4().hex, self._number, tuple(os.path.abspath(p) for p in paths),
-                      codec.name, preset.name, options=options)
+                      codec.name, preset.name, options=options, inventory_options=inventory_options)
+            job.input_paths = job.paths
             for path, reason in (skipped or {}).items():
                 result = jpegdrop.empty_result(Path(os.path.abspath(path)), codec.name, preset.name)
                 result.update(status="skipped", error_code="unsupported_input", skip_reason=reason)
@@ -165,6 +174,12 @@ class JobManager:
     def _prune(self) -> None:
         terminal = [j for j in self._jobs if not j.active]
         remove = {j.id for j in terminal[:-self.history_limit]} if self.history_limit else {j.id for j in terminal}
+        remaining = [job for job in terminal if job.id not in remove]
+        count = sum(len(job.results) + len(job.skipped) for job in remaining)
+        while len(remaining) > 1 and count > self.history_result_limit:
+            old = remaining.pop(0)
+            count -= len(old.results) + len(old.skipped)
+            remove.add(old.id)
         self._jobs[:] = [j for j in self._jobs if j.id not in remove]
 
     def _finish_missing(self, job: Job, *, cancelled: bool) -> None:
@@ -185,21 +200,39 @@ class JobManager:
                     if self._closing:
                         return
                     continue
-                job.state = "running"
+                job.state = "scanning"
                 self._changed()
             try:
-                self._run(job)
+                inventory = inventory_inputs(job.input_paths, job.inventory_options,
+                                             cancelled=lambda: job.cancel_requested)
+                with self._condition:
+                    job.paths = tuple(entry.source for entry in inventory.entries)
+                    job.output_directories = tuple(entry.output_directory for entry in inventory.entries)
+                    for issue in inventory.issues:
+                        result = jpegdrop.empty_result(Path(issue.source), job.codec, job.preset)
+                        result.update(status="error" if issue.error else "skipped",
+                                      error=issue.message if issue.error else None,
+                                      error_code="inventory_error" if issue.error else "unsupported_input",
+                                      skip_reason=issue.message)
+                        job.skipped.append(result)
+                    if not job.cancel_requested:
+                        job.state = "running"
+                    self._changed()
+                if job.paths and not job.cancel_requested:
+                    self._run(job)
+            except InventoryCancelled:
+                pass
             except Exception as exc:
                 with self._condition:
                     job.problem = f"{type(exc).__name__}: {exc}"
             finally:
                 self._cleanup(job)
                 with self._condition:
-                    missing = len(job.results) < len(job.paths)
+                    missing = len(job.results) < len(job.paths) or job.state == "cancelling"
                     self._finish_missing(job, cancelled=job.cancel_requested)
                     job.current, job.pid = None, None
                     successes = sum(bool(r.get("target")) and not r.get("error") for r in job.results)
-                    failures = sum(bool(r.get("error")) for r in job.results)
+                    failures = sum(bool(r.get("error")) for r in job.all_results)
                     if job.cancel_requested and missing:
                         job.state = "cancelled"
                     elif failures or job.problem:
@@ -248,10 +281,19 @@ class JobManager:
                 raise ValueError("Unbekanntes CLI-Ereignis")
 
     def _run(self, job: Job) -> None:
+        with tempfile.TemporaryDirectory(prefix=f"jpegdrop-input-{job.id}-") as directory:
+            plan = Path(directory) / "inputs.json"
+            plan.write_text(json.dumps([{"source": source, "output_directory": output}
+                            for source, output in zip(job.paths, job.output_directories)], ensure_ascii=True))
+            if plan.stat().st_size > 32 * 1024 * 1024:
+                raise ValueError("Der Eingabeplan überschreitet 32 MiB.")
+            self._run_plan(job, plan)
+
+    def _run_plan(self, job: Job, plan: Path) -> None:
         cmd = [self.python, "-I", "-B", self.script, "--codec", job.codec,
                "--preset", job.preset, "--max-edge", str(job.options.max_edge),
                "--preserve-alpha" if job.options.preserve_alpha else "--flatten-alpha",
-               "--background", job.options.background, "--events", "--", *job.paths]
+               "--background", job.options.background, "--events", "--input-plan", str(plan)]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", JPEGDROP_JOB_ID=job.id)
         with self._condition:
             if job.cancel_requested:
@@ -324,7 +366,9 @@ class JobManager:
     def _cleanup(job: Job) -> None:
         # Die zufällige Auftrags-ID ist nur diesem Prozess bekannt. Keinesfalls
         # generisch .jpegdrop-* löschen: andere CLI-Läufe dürfen parallel arbeiten.
-        for parent in {Path(p).parent for p in job.paths}:
+        parents = {Path(output) if output is not None else Path(source).parent
+                   for source, output in zip(job.paths, job.output_directories)}
+        for parent in parents:
             try:
                 for path in parent.glob(f"{jpegdrop.TEMP_PREFIX}{job.id}-*"):
                     path.unlink(missing_ok=True)

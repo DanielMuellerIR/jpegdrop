@@ -1,13 +1,14 @@
 # JPEGdrop development
 
 JPEGdrop is a macOS dock droplet with a headless Python conversion core.
-Images are written as metadata-free copies beside their sources. Source files
+Images are written as metadata-free copies, by default beside their sources. Source files
 must never be modified or overwritten, and output names must handle collisions.
 
 ## Architecture
 
 - `jpegdrop.py`: Pillow/pi-heif conversion, presets, settings and CLI.
 - `app/menu_app.py`: thin PyObjC/Cocoa interface and Finder drop handling.
+- `app/input_plan.py`: bounded folder inventory, duplicate/link handling and output mapping.
 - `app/jobs.py`: serial background jobs, progress, cancellation and shutdown.
 - `app/updates.py`: Sparkle integration; active jobs delay installation.
 - `app/launcher.m`: native entry point embedding CPython so the main bundle

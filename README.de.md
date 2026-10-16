@@ -2,14 +2,14 @@
 
 **🌐 Sprache / Language:** [English](README.md) · [Deutsch](README.de.md)
 
-JPEGdrop erzeugt aus Bildern auf seinem macOS-Dock-Icon kleinere, metadatenfreie JPEG-, PNG-, AVIF- oder WebP-Kopien neben den Originalen.
+JPEGdrop erzeugt aus Bildern auf seinem macOS-Dock-Icon kleinere, metadatenfreie JPEG-, PNG-, AVIF- oder WebP-Kopien, standardmäßig neben den Originalen.
 
 ## Installieren und verwenden
 
 1. Das DMG unter [Releases](https://github.com/danielmuellerir/jpegdrop/releases) herunterladen.
 2. JPEGdrop nach Programme ziehen und öffnen. Python und Homebrew sind nicht nötig.
 3. Im **JD**-Menü oder unter **Einstellungen…** (⌘,) Codec und Preset wählen.
-4. Bilder auf das Dock- oder Finder-Icon der App ziehen.
+4. Bilder oder Ordner auf das Dock- oder Finder-Icon der App ziehen.
 
 Die Oberfläche ist deutsch. Standard ist **JPEG · hoch** (Qualität 85).
 JPEGdrop wird ausschließlich für Apple Silicon gebaut. Das Bundle weist macOS
@@ -55,6 +55,30 @@ und Alphastufen reduzieren.
 Auch das höchste JPEG-Preset arbeitet verlustbehaftet. Schon optimierte Bilder
 können größer werden; Dateigrößen und Warnungen werden entsprechend angezeigt.
 
+## Ordner und Ausgabeablage
+
+Ordnerdrops erfassen Bilder auf der obersten Ebene. **Unterordner einbeziehen**
+aktiviert verschachtelte Ordner. JPEGdrop erstellt das Inventar vor der
+Konvertierung und überspringt symbolische Links, doppelte Dateien, App-Pakete
+und verwaltete Fotomediatheken. Ungeeignete Einträge werden gemeldet. Die
+Inventur ist auf 10.000 Bilder und höchstens 50.000 untersuchte Dateien/Ordner
+begrenzt; eine Überschreitung beendet den Auftrag vor der Konvertierung.
+
+Die Ausgabeablage lässt sich in den Einstellungen wählen:
+
+| Einstellung | Beispiel für `Album/Unterordner/foto.png` als JPEG |
+|---|---|
+| Neben der Quelle (Standard) | `Album/Unterordner/foto.jpg` |
+| Ausgabe-Unterordner `JPEGdrop` | `Album/JPEGdrop/Unterordner/foto.jpg` |
+| Gewählter Zielordner `Exporte` | `Exporte/Album/Unterordner/foto.jpg` |
+
+Einzeldateien landen direkt im Zielordner oder im Unterordner ihres
+Quellverzeichnisses. Die Ordnerstruktur bleibt erhalten. Ein gewähltes Ziel im
+Quellbaum wird beim Einlesen ausgelassen. Andere vorhandene Bilder bleiben
+Eingaben, auch frühere Konvertierungen. Bei Kollisionen wird hochgezählt;
+Quellen und bestehende Ausgaben bleiben unverändert. Bei überlappenden
+Eingaben zählt das erste Vorkommen.
+
 ## Aufträge, Fortschritt und Abbruch
 
 **Aufträge…** (⌘0) öffnet die Liste mit Fortschritt, aktuellem Dateinamen,
@@ -69,7 +93,8 @@ wählt vorhandene Ausgaben des gewählten Auftrags aus, auch bei Teilerfolg.
 Beim Beenden fragt die App vor dem Abbruch aktiver Aufträge und wartet auf ihre
 Encoder-Prozesse. Bei einem erzwungenen Prozessabbruch kann sie kein Aufräumen
 garantieren. Die Liste hält bis zu 50 abgeschlossene Aufträge während der
-Sitzung vor und ist nach dem Neustart leer.
+Sitzung vor und ist nach dem Neustart leer. Große Inventare entfernen ältere
+Aufträge früher aus der Liste; der letzte Auftrag bleibt vollständig.
 
 ## Updates und Datenschutz
 
@@ -93,6 +118,8 @@ Aus einem Quellcheckout mit installierten Abhängigkeiten:
 .venv/bin/python jpegdrop.py --codec avif --preset mittel foto.heic
 .venv/bin/python jpegdrop.py --json --codec jpeg foto.png
 .venv/bin/python jpegdrop.py --codec webp --preset verlustfrei --preserve-alpha --max-edge 1600 foto.png
+.venv/bin/python jpegdrop.py --recursive --output-dir Exporte --codec jpeg Album
+.venv/bin/python jpegdrop.py --output-subdir JPEGdrop --codec webp foto.png
 .venv/bin/python jpegdrop.py --list-presets
 .venv/bin/python jpegdrop.py --print-settings-path
 ```
@@ -111,6 +138,12 @@ opaken sRGB-Hintergrund.
 `--suffix` ändert das Standardsuffix `-klein` bei Quellen, die schon im Ziel-Codec
 vorliegen. `-q/--quality` bleibt für JPEG mit fester Qualität verfügbar.
 Der Exit-Status ist die Anzahl Fehler, begrenzt auf 125; null bedeutet Erfolg.
+
+`--no-recursive` und `--beside` überschreiben gespeicherte Ordner-/Ablageoptionen.
+Für große Dateilisten nimmt `--input-plan plan.json` ein JSON-Array aus Objekten
+mit absolutem `source` und absolutem oder null gesetztem `output_directory` an.
+Es ersetzt Positionsargumente, Rekursion und Ablageflags; Bildoptionen gelten
+weiterhin. Ein Plan ist auf 10.000 Dateien und 32 MiB begrenzt.
 
 Versionen ohne Update-Menü benötigen einmalig die manuelle Installation des aktuellen DMGs.
 

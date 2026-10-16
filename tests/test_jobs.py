@@ -1,6 +1,8 @@
 """Auftragslebenszyklus mit echten CLI-Prozessen und kontrolliert langsamen Encodern."""
 from pathlib import Path
 import json
+import errno
+import io
 import os
 import signal
 import subprocess
@@ -29,10 +31,47 @@ def wait_for(predicate, seconds=6):
 
 
 class JobsTests(unittest.TestCase):
+    def test_inventory_larger_than_os_argument_limit_completes_via_manifest(self):
+        root = self.root
+        for index in range(3):
+            root = root / (str(index) + 'd' * 179)
+        root.mkdir(parents=True)
+        template = io.BytesIO()
+        Image.new('RGB', (6, 4), 'red').save(template, format='PNG')
+        data = template.getvalue()
+        length = len(os.fsencode(root)) + 241
+        count = min(5000, os.sysconf('SC_ARG_MAX') // length + 200)
+        sources = []
+        for index in range(count):
+            path = root / (f'{index:05d}-' + 'x' * 230 + '.png')
+            path.write_bytes(data); sources.append(str(path))
+        self.assertGreater(sum(len(os.fsencode(path)) + 1 for path in sources), os.sysconf('SC_ARG_MAX'))
+        with self.assertRaises(OSError) as error:
+            subprocess.run([sys.executable, '-c', 'pass', *sources], check=True)
+        self.assertEqual(error.exception.errno, errno.E2BIG)
+        manager = self.manager()
+        manager.submit([str(root)], {**SETTINGS, 'output_mode':'directory', 'output_directory':str(self.root/'out')})
+        self.assertTrue(manager.wait_idle(30))
+        job = manager.snapshot()[1][0]
+        self.assertEqual(job.state, 'completed', job.problem)
+        self.assertEqual(len(job.targets), count)
+        self.assertTrue(all(Path(path).read_bytes() == data for path in sources))
+
+    def test_history_budget_preserves_latest_large_job(self):
+        source = self.image()
+        manager = self.manager(history_limit=50, history_result_limit=2)
+        for _ in range(3):
+            manager.submit([str(source)], SETTINGS)
+            self.assertTrue(manager.wait_idle(6))
+        self.assertEqual(len(manager.snapshot()[1]), 2)
+
     def test_queued_image_options_are_independent_of_changed_settings(self):
         wrapper = self.wrapper('''
 import time
-while not (__import__('pathlib').Path(sys.argv[-1]).parent/'release').exists(): time.sleep(.01)
+import json
+from pathlib import Path
+root = Path(json.loads(Path(sys.argv[-1]).read_text())[0]['source']).parent
+while not (root/'release').exists(): time.sleep(.01)
 raise SystemExit(jpegdrop.main())
 ''')
         first = self.image("first.png", "RGBA")
@@ -234,7 +273,7 @@ import errno, time
 original_copy = jpegdrop.shutil.copyfileobj
 def no_links(*args): raise OSError(errno.EOPNOTSUPP, 'controlled fallback')
 def slow_copy(source, target):
-    marker = __import__('pathlib').Path(sys.argv[-1]).parent
+    marker = __import__('pathlib').Path(__import__('json').loads(__import__('pathlib').Path(sys.argv[-1]).read_text())[0]['source']).parent
     (marker/'publishing-ready').touch()
     while not (marker/'release').exists(): time.sleep(0.01)
     return original_copy(source, target)
@@ -264,7 +303,7 @@ raise SystemExit(jpegdrop.main())
 import subprocess, time, os
 from pathlib import Path
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-root = Path(sys.argv[-1]).parent
+root = Path(__import__('json').loads(Path(sys.argv[-1]).read_text())[0]['source']).parent
 (root/'child-pid').write_text(str(child.pid))
 print('{"event":"started","total":1}', flush=True)
 time.sleep(60)

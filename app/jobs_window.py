@@ -176,7 +176,8 @@ class JobsWindowController(F.NSObject):
         self._updating = True
         self._result_table.reloadData()
         if job is not None:
-            text = f"{STATE_LABELS[job.state]} · Bilder verarbeitet: {job.completed} / {len(job.paths)}"
+            text = ("Ordner und Dateien werden eingelesen …" if job.state == "scanning" else
+                    f"{STATE_LABELS[job.state]} · Bilder verarbeitet: {job.completed} / {len(job.paths)}")
             if job.skipped:
                 text += f" · {len(job.skipped)} übersprungen"
             if job.current:
@@ -220,7 +221,7 @@ class JobsWindowController(F.NSObject):
             job = self._jobs[row]
             return {"title": job.title, "format": f"{job.codec.upper()} · {job.preset}",
                     "state": STATE_LABELS[job.state],
-                    "progress": f"{job.completed} / {len(job.paths)}"}[key]
+                    "progress": "…" if job.state == "scanning" else f"{job.completed} / {len(job.paths)}"}[key]
         result = self.selected_job().all_results[row]
         return {"source": Path(result["source"]).name, "state": result_state(result),
                 "detail": result_detail(result)}[key]

@@ -6,10 +6,10 @@ Image copies omit embedded EXIF/GPS/ICC data after orientation and color
 conversion. Filenames, filesystem timestamps and visible image contents are
 not anonymized.
 
-Codec and preset preferences are stored in
+Image options and chosen output paths are stored in
 `~/Library/Application Support/JPEGdrop/settings.json`. Update preferences are
 stored in the app's macOS preferences. The job list is kept in memory for the
-current session. Generated images remain next to their originals.
+current session. Generated images remain in the selected output location. A private temporary file list is removed at normal job completion; a forced process termination can leave temporary lists.
 
 When automatic update checks are enabled, or you choose “Nach Updates suchen…”,
 Sparkle contacts the JPEGdrop feed on GitHub Pages. A confirmed update downloads
@@ -31,10 +31,10 @@ Absturzmeldedienste. Eingebettete EXIF-/GPS-/ICC-Daten werden nach der
 Orientierungs- und Farbumrechnung entfernt. Dateinamen, Dateisystem-Zeitstempel
 und sichtbare Bildinhalte werden nicht anonymisiert.
 
-Codec und Preset liegen in
+Bildoptionen und gewählte Ausgabepfade liegen in
 `~/Library/Application Support/JPEGdrop/settings.json`, Update-Einstellungen
 in den macOS-Einstellungen der App. Die Auftragsliste bleibt nur während der
-Sitzung im Speicher. Erzeugte Dateien liegen neben den Originalen.
+Sitzung im Speicher. Erzeugte Dateien liegen in der gewählten Ablage. Eine private temporäre Dateiliste wird beim regulären Abschluss gelöscht; ein harter Prozessabbruch kann Listenreste hinterlassen.
 
 Automatische und manuell gestartete Update-Prüfungen laden den Feed von
 GitHub Pages. Nach Bestätigung wird das Update von GitHub Releases geladen.

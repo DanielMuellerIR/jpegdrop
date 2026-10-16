@@ -50,8 +50,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PIL import Image, ImageOps, ImageCms
+# -I entfernt auch das Skriptverzeichnis. Nur die eigenen, im Bundle versiegelten
+# Nachbarmodule zulassen; fremde PYTHONPATH-Verzeichnisse bleiben ausgeschlossen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
+                            inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.7.0"
+__version__ = "2.8.0"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -477,7 +482,8 @@ def unique_target(base: Path, name_suffix: str = "") -> Path:
         n += 1
 
 
-def target_base_path(src: Path, codec: Codec, name_suffix: str) -> Path:
+def target_base_path(src: Path, codec: Codec, name_suffix: str,
+                     output_directory: Path | None = None) -> Path:
     """Bestimmt den noch nicht hochgezählten Zielpfad neben der Quelle.
 
     Logik:
@@ -486,13 +492,14 @@ def target_base_path(src: Path, codec: Codec, name_suffix: str) -> Path:
       - sonst -> gleicher Name, neue Codec-Endung.
     """
     src_ext = src.suffix.lower()
+    parent = output_directory if output_directory is not None else src.parent
     # Stem notfalls kuerzen: Suffix und neue Endung koennen einen gerade noch
     # erlaubten Quellnamen ueber NAME_MAX hinaus wachsen lassen (siehe fit_name).
     if src_ext in codec.native_extensions:
         stem = fit_name(src.stem, name_suffix, codec.extension)
-        return src.with_name(f"{stem}{name_suffix}{codec.extension}")
+        return parent / f"{stem}{name_suffix}{codec.extension}"
     stem = fit_name(src.stem, "", codec.extension)
-    return src.with_name(f"{stem}{codec.extension}")
+    return parent / f"{stem}{codec.extension}"
 
 
 def publish_unique(
@@ -743,6 +750,7 @@ def _process_one(
     fixed_quality: int | None = None,
     on_event: Callable[[str, dict | None], None] | None = None,
     options: ImageOptions = ImageOptions(),
+    output_directory: Path | None = None,
 ) -> dict:
     """Gemeinsame Lade-, Normalisierungs-, Speicher- und Fehlerpipeline."""
     result = empty_result(src, codec.name, preset_name)
@@ -780,7 +788,9 @@ def _process_one(
         result["quality"] = save_kwargs.get("quality")
         img = _prepare_for_preset(img, codec, preset_name)
 
-        base_path = target_base_path(src, codec, name_suffix)
+        base_path = target_base_path(src, codec, name_suffix, output_directory)
+        if output_directory is not None:
+            output_directory.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(
             prefix=temporary_prefix(),
             suffix=codec.extension,
@@ -852,9 +862,11 @@ def process_one(
     name_suffix: str,
     *, on_event: Callable[[str, dict | None], None] | None = None,
     options: ImageOptions = ImageOptions(),
+    output_directory: Path | None = None,
 ) -> dict:
     """Verarbeitet ein einzelnes Bild und liefert auch Fehler strukturiert."""
-    return _process_one(src, codec, preset_name, name_suffix, on_event=on_event, options=options)
+    return _process_one(src, codec, preset_name, name_suffix, on_event=on_event,
+                        options=options, output_directory=output_directory)
 
 
 def quality_label(codec_name: str, preset_name: str, quality: int | None) -> str:
@@ -972,6 +984,10 @@ DEFAULT_SETTINGS = {
     "max_edge": 0,
     "preserve_alpha": False,
     "background": "#FFFFFF",
+    "recursive": False,
+    "output_mode": "beside",
+    "output_directory": "",
+    "output_subdir": "JPEGdrop",
 }
 
 
@@ -992,6 +1008,16 @@ def validated_settings(data: dict) -> dict:
         settings[key] = getattr(options, key)
     if codec == "jpeg":
         settings["preserve_alpha"] = False
+    for key in ("recursive", "output_directory", "output_subdir"):
+        try:
+            options = InventoryOptions(**{key: data.get(key, DEFAULT_SETTINGS[key])})
+        except (ValueError, TypeError):
+            continue
+        settings[key] = getattr(options, key)
+    mode = data.get("output_mode")
+    if isinstance(mode, str) and mode in {"beside", "subfolder", "directory"}:
+        if mode != "directory" or settings["output_directory"]:
+            settings["output_mode"] = mode
     return settings
 
 
@@ -1029,6 +1055,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"jpegdrop {__version__}")
     parser.add_argument("paths", nargs="*", help="Bilddateien (HEIC/PNG/JPG/TIFF/WEBP/AVIF ...)")
+    parser.add_argument("--input-plan", type=Path, help="JSON-Eingabeplan mit absoluten source/output_directory-Pfaden; ersetzt Positionsargumente.")
+    recursion = parser.add_mutually_exclusive_group()
+    recursion.add_argument("--recursive", dest="recursive", action="store_true", default=None,
+                           help="Unterordner in Ordner-Eingaben einbeziehen.")
+    recursion.add_argument("--no-recursive", dest="recursive", action="store_false")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--output-dir", type=Path, help="Zielordner; bei Ordner-Eingaben Quellstruktur unter dem Wurzelnamen erhalten.")
+    target.add_argument("--output-subdir", help="Ausgabe-Unterordner unter der jeweiligen Quelle.")
+    target.add_argument("--beside", action="store_true", help="Neben der Quelle ablegen, auch bei anders gespeicherter Zielablage.")
     parser.add_argument("--max-edge", type=int, metavar="PIXEL", help="Längere Kante begrenzen, niemals vergrößern; 0 = Originalgröße.")
     alpha = parser.add_mutually_exclusive_group()
     alpha.add_argument("--preserve-alpha", dest="preserve_alpha", action="store_true", default=None,
@@ -1107,7 +1142,7 @@ def main(argv: list[str] | None = None) -> int:
         print(SETTINGS_PATH)
         return 0
 
-    if not args.paths:
+    if not args.paths and not args.input_plan:
         parser.error("Keine Bilddateien angegeben. Tipp: --list-presets zeigt die Optionen.")
 
     # Settings laden, Defaults drüberlegen
@@ -1159,6 +1194,51 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         parser.error(str(error))
 
+    original_paths = {os.path.abspath(p): str(Path(p)) for p in reversed(args.paths)}
+    issues = []
+    try:
+        if args.input_plan:
+            if args.paths or args.recursive is not None or args.output_dir or args.output_subdir is not None or args.beside:
+                parser.error("--input-plan ersetzt Dateiliste, Rekursion und Zielablage.")
+            if args.input_plan.stat().st_size > 32 * 1024 * 1024:
+                parser.error("Der Eingabeplan überschreitet 32 MiB.")
+            data = json.loads(args.input_plan.read_text(encoding="utf-8"))
+            if not isinstance(data, list) or not data or len(data) > MAX_IMAGES:
+                parser.error(f"Der Eingabeplan benötigt 1 bis {MAX_IMAGES} Dateien.")
+            entries = []
+            for row in data:
+                if (not isinstance(row, dict) or set(row) != {"source", "output_directory"}
+                        or not isinstance(row["source"], str) or "\0" in row["source"]
+                        or not Path(row["source"]).is_absolute()):
+                    parser.error("Ungültige Quelldatei im Eingabeplan.")
+                output = row["output_directory"]
+                if output is not None and (not isinstance(output, str) or "\0" in output or not Path(output).is_absolute()):
+                    parser.error("Ungültiger Zielordner im Eingabeplan.")
+                entries.append(InputEntry(row["source"], output))
+        else:
+            mode = ("directory" if args.output_dir is not None else "subfolder" if args.output_subdir is not None
+                    else "beside" if args.beside else settings["output_mode"])
+            inventory_options = InventoryOptions(
+                recursive=settings["recursive"] if args.recursive is None else args.recursive,
+                output_mode=mode,
+                output_directory=str(args.output_dir.expanduser().absolute()) if args.output_dir is not None else settings["output_directory"],
+                output_subdir=settings["output_subdir"] if args.output_subdir is None else args.output_subdir,
+            )
+            inventory = inventory_inputs(args.paths, inventory_options)
+            entries = [InputEntry(original_paths.get(entry.source, entry.source), entry.output_directory)
+                       for entry in inventory.entries]
+            for issue in inventory.issues:
+                result = empty_result(Path(issue.source), codec.name, preset_name)
+                result.update(status="error" if issue.error else "skipped",
+                              error=issue.message if issue.error else None,
+                              error_code="inventory_error" if issue.error else "unsupported_input",
+                              skip_reason=issue.message)
+                issues.append(result)
+        args.paths = [entry.source for entry in entries]
+    except (ValueError, OSError, UnicodeError) as error:
+        parser.error(str(error))
+    total = len(entries) + len(issues)
+
     suffix_bytes = len(args.suffix.encode("utf-8", "surrogateescape"))
     extension_bytes = len(codec.extension.encode("utf-8"))
     min_collision_bytes = len("-2")
@@ -1191,7 +1271,7 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal publishing
         if kind == "result":
             results.append(result)
-            emit(kind, index=index, total=len(args.paths), result=result)
+            emit(kind, index=index, total=total, result=result)
             publishing = False
             if pending_term is not None:
                 _sigterm_exit(pending_term, None)
@@ -1199,7 +1279,7 @@ def main(argv: list[str] | None = None) -> int:
             # Eine veröffentlichte Datei muss der GUI noch bestätigt werden.
             # Erst nach diesem Ergebnis darf SIGTERM die Verarbeitung beenden.
             publishing = True
-            emit(kind, index=index, total=len(args.paths))
+            emit(kind, index=index, total=total)
 
     def emit(event: str, **fields) -> None:
         if args.events:
@@ -1208,27 +1288,33 @@ def main(argv: list[str] | None = None) -> int:
 
     previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
     try:
-        emit("started", total=len(args.paths))
+        emit("started", total=total)
         for index, p in enumerate(args.paths):
-            emit("image_started", index=index, total=len(args.paths), source=p)
+            emit("image_started", index=index, total=total, source=p)
+            output_directory = Path(entries[index].output_directory) if entries[index].output_directory is not None else None
             if args.quality is not None:
                 r = process_one_with_fixed_quality(Path(p), args.quality, args.suffix,
                                                    options=options,
+                                                   output_directory=output_directory,
                                                    on_event=image_event if args.events else None)
             else:
                 r = process_one(Path(p), codec, preset_name, args.suffix,
                                 options=options,
+                                output_directory=output_directory,
                                 on_event=image_event if args.events else None)
             if not args.events:
                 results.append(r)
-        emit("finished", total=len(args.paths), completed=len(results))
+        for offset, result in enumerate(issues):
+            results.append(result)
+            emit("result", index=len(entries) + offset, total=total, result=result)
+        emit("finished", total=total, completed=len(results))
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
 
     if args.events:
         pass
     elif args.json:
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        print(json.dumps(results, ensure_ascii=True, indent=2))
     elif args.brief:
         print(summary_line(results))
     else:
@@ -1245,6 +1331,7 @@ def process_one_with_fixed_quality(
     src: Path, quality: int, name_suffix: str,
     *, on_event: Callable[[str, dict | None], None] | None = None,
     options: ImageOptions = ImageOptions(),
+    output_directory: Path | None = None,
 ) -> dict:
     """Legacy: --quality N ist äquivalent zu --codec jpeg mit fester q.
     Bewahrt die alte -q/--quality Semantik (eine q für alle Bilder)."""
@@ -1257,6 +1344,7 @@ def process_one_with_fixed_quality(
         fixed_quality=quality,
         on_event=on_event,
         options=options,
+        output_directory=output_directory,
     )
 
 

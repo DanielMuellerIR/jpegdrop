@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.0 — 2026-10-16
+
+- Folder drops with optional recursion and a fixed, bounded input inventory.
+- Output beside sources, in a named subfolder or in a chosen directory while preserving structure.
+- Duplicate/symlink handling and exclusion of the selected output area from scanning.
+- Large jobs use bounded input manifests and retain source/output mappings through cancellation.
+- Native destination chooser and visible inventory progress.
+
 ## 2.7.0 — 2026-10-16
 
 - Proportional maximum-edge resizing without upscaling, after EXIF orientation.
