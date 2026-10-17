@@ -139,12 +139,29 @@ class PreviewManager:
         finally:
             self._kill(proc)
 
+    def _cleanup_artifact(self, artifact, generation):
+        try:
+            artifact.cleanup()
+        except OSError as error:
+            # Für einen erneuten Versuch behalten; fehlendes Cleanup ist kein Erfolg.
+            self._artifact = artifact
+            if generation == self._generation:
+                self._state = {"generation": generation, "status": "error",
+                               "error": f"Temporäre Vorschau konnte nicht entfernt werden: {error}"}
+            return False
+        return True
+
     def _work(self):
         while True:
             with self._condition:
                 # Artefakte gehören dem Worker; niemals fremde Temp-Verzeichnisse suchen.
                 if self._artifact is not None and self._state["status"] != "ready":
-                    self._artifact.cleanup()
+                    if not self._cleanup_artifact(self._artifact, self._generation):
+                        self._pending = None
+                        if self._closing:
+                            return
+                        self._condition.wait()
+                        continue
                     self._artifact = None
                 if self._closing:
                     return
@@ -158,8 +175,9 @@ class PreviewManager:
                     continue
                 self._pending = None
                 self._running = True
-            artifact = tempfile.TemporaryDirectory(prefix="jpegdrop-preview-")
+            artifact = None
             try:
+                artifact = tempfile.TemporaryDirectory(prefix="jpegdrop-preview-")
                 response = self._render(request, artifact.name)
                 with self._condition:
                     if response is not None and not self._obsolete(request):
@@ -173,8 +191,10 @@ class PreviewManager:
                     if not self._obsolete(request):
                         self._state = {"generation": request.generation, "status": "error", "error": str(error)}
             finally:
-                if artifact is not None:
-                    artifact.cleanup()
                 with self._condition:
-                    self._running = False
-                    self._condition.notify_all()
+                    try:
+                        if artifact is not None:
+                            self._cleanup_artifact(artifact, request.generation)
+                    finally:
+                        self._running = False
+                        self._condition.notify_all()

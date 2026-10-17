@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.12.1 — 2026-10-17
+
+- Preview reports temporary storage errors without stopping its worker or leaving updates blocked.
+- Failed preview cleanup remains visible and is retried before the next preview.
+- Timeout, cancellation and shutdown tests use a controlled waiting process.
+
 ## 2.12.0 — 2026-10-16
 
 - Public release of named profiles, the Finder Quick Action and the optional comparison preview.

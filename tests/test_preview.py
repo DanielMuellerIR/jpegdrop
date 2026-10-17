@@ -1,6 +1,8 @@
 """Echte Kodierung, Quellschutz und Lebenszyklus der optionalen Vorschau."""
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from unittest.mock import patch
@@ -144,34 +146,104 @@ def test_stale_running_result_and_intermediate_requests_are_discarded(tmp_path):
         assert all(not path.exists() for path in directories)
 
 
-def test_cancel_timeout_update_and_shutdown_reap_process_and_artifacts(tmp_path):
-    source = tmp_path / "source.png"
-    Image.new("RGB", (100, 100), "blue").save(source)
-    manager = PreviewManager(sys.executable, debounce=0, timeout=.001)
-    directories = []
-    original_render = manager._render
-    def tracked(request, directory):
-        directories.append(Path(directory))
-        return original_render(request, directory)
-    manager._render = tracked
+@pytest.fixture
+def blocked_preview_process(monkeypatch):
+    processes, directories = [], []
+    popen = subprocess.Popen
+    def start(command, **kwargs):
+        directories.append(Path(command[-1]))
+        process = popen([sys.executable, "-I", "-B", "-c", "import time; time.sleep(60)"], **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr("app.preview.subprocess.Popen", start)
+    return processes, directories
+
+
+def test_timeout_reaps_process_and_artifacts(blocked_preview_process):
+    processes, directories = blocked_preview_process
+    manager = PreviewManager(sys.executable, debounce=0, timeout=.05)
     try:
-        manager.request(str(source), jpegdrop.DEFAULT_SETTINGS)
+        manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
         state = wait_for(lambda: (s if (s := manager.snapshot())["status"] == "error" else None))
         assert "Zeitlimit" in state["error"]
         wait_for(lambda: not manager.has_active_jobs)
+        assert len(processes) == 1 and processes[0].poll() is not None
         assert all(not path.exists() for path in directories)
-        manager.timeout = 15
-        manager.request(str(source), jpegdrop.DEFAULT_SETTINGS)
-        wait_for(lambda: manager._running)
-        manager.prepare_for_update()
-        with pytest.raises(ValueError, match="Update"):
-            manager.request(str(source), jpegdrop.DEFAULT_SETTINGS)
-        wait_for(lambda: not manager.has_active_jobs)
-        assert all(not path.exists() for path in directories)
-        manager.resume_after_update()
-        manager.request(str(source), jpegdrop.DEFAULT_SETTINGS)
-        manager.cancel()
-        assert manager.snapshot()["status"] == "cancelled"
     finally:
         manager.shutdown()
+
+
+def test_cancel_update_and_shutdown_reap_process_and_artifacts(blocked_preview_process):
+    processes, directories = blocked_preview_process
+    manager = PreviewManager(sys.executable, debounce=0)
+    try:
+        manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        wait_for(lambda: len(processes) == 1)
+        assert not manager.prepare_for_update()
+        with pytest.raises(ValueError, match="Update"):
+            manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        wait_for(lambda: not manager.has_active_jobs)
+        assert processes[0].poll() is not None
+        assert all(not path.exists() for path in directories)
+        manager.resume_after_update()
+        manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        wait_for(lambda: len(processes) == 2)
+        manager.cancel()
+        assert manager.snapshot()["status"] == "cancelled"
+        wait_for(lambda: not manager.has_active_jobs)
+        assert processes[1].poll() is not None
+        manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        wait_for(lambda: len(processes) == 3)
+    finally:
+        manager.shutdown()
+    assert manager.stopped and not manager.has_active_jobs
+    assert all(process.poll() is not None for process in processes)
     assert all(not path.exists() for path in directories)
+
+
+@pytest.mark.parametrize("failure", ["create", "discard", "replace"])
+def test_temp_errors_are_visible_and_worker_recovers(tmp_path, monkeypatch, failure):
+    directories = []
+    failing = threading.Event()
+    temporary_directory = tempfile.TemporaryDirectory
+    def create(**kwargs):
+        if failure == "create" and failing.is_set():
+            raise OSError("Temp-Anlage fehlgeschlagen")
+        artifact = temporary_directory(dir=tmp_path, **kwargs)
+        directories.append(Path(artifact.name))
+        cleanup = artifact.cleanup
+        def remove():
+            if failure != "create" and failing.is_set():
+                raise OSError("Temp-Bereinigung fehlgeschlagen")
+            cleanup()
+        artifact.cleanup = remove
+        return artifact
+    def renderer(self, request, directory):
+        return {"error": "Encoderfehler"} if failure == "discard" and failing.is_set() else {"result": {}}
+    monkeypatch.setattr("app.preview.tempfile.TemporaryDirectory", create)
+    monkeypatch.setattr(PreviewManager, "_render", renderer)
+    manager = PreviewManager(sys.executable, debounce=0)
+    try:
+        if failure == "replace":
+            manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+            wait_for(lambda: manager.snapshot()["status"] == "ready")
+        failing.set()
+        failed = manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        state = wait_for(lambda: (s if (s := manager.snapshot())["status"] == "error"
+                                 and "Temp-" in s["error"] else None), timeout=2)
+        assert state["generation"] == failed
+        assert "Temp-" in state["error"]
+        wait_for(lambda: not manager.has_active_jobs, timeout=2)
+        assert not manager.stopped
+        assert manager.prepare_for_update()
+        failing.clear()
+        manager.resume_after_update()
+        latest = manager.request("source.png", jpegdrop.DEFAULT_SETTINGS)
+        state = wait_for(lambda: (s if (s := manager.snapshot())["status"] == "ready" else None), timeout=2)
+        assert state["generation"] == latest
+        assert all(not directory.exists() for directory in directories[:-1])
+    finally:
+        failing.clear()
+        manager.shutdown()
+    assert manager.stopped and not manager.has_active_jobs
+    assert all(not directory.exists() for directory in directories)
