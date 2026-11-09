@@ -51,14 +51,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageOps, ImageCms
+from PIL import Image, ImageOps, ImageCms, ImageMath
 # -I entfernt auch das Skriptverzeichnis. Nur die eigenen, im Bundle versiegelten
 # Nachbarmodule zulassen; fremde PYTHONPATH-Verzeichnisse bleiben ausgeschlossen.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
                             inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.12.1"
+__version__ = "2.12.2"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -651,7 +651,17 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None,
     # vor der Profilumrechnung und dem Entfernen der Metadaten in einen
     # expliziten Alphakanal überführen.
     if "transparency" in img.info and img.mode not in ("RGBA", "LA"):
-        img = img.convert("LA" if img.mode == "L" else "RGBA")
+        if img.mode in ("I", "I;16", "I;16L", "I;16B", "I;16N"):
+            # Pillow übernimmt tRNS bei 16-Bit-Graustufen nicht nach RGBA.
+            # Den Schlüssel vor der Reduktion auf 8 Bit vergleichen.
+            alpha = ImageMath.lambda_eval(
+                lambda args: (args["gray"] != img.info["transparency"]) * 255,
+                gray=img.convert("I"),
+            ).convert("L")
+            img = img.convert("RGBA")
+            img.putalpha(alpha)
+        else:
+            img = img.convert("LA" if img.mode == "L" else "RGBA")
 
     # 2) Das Profil im ursprünglichen Farbmodus anwenden. CMYK zuerst nach
     #    RGB zu konvertieren verwirft die Farbinformationen für das CMYK-ICC.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.12.2 — 2026-11-09
+
+- Preserve 16-bit grayscale PNG transparency keys before conversion to 8-bit pixels, including flattening onto the selected background.
+
 ## 2.12.1 — 2026-10-17
 
 - Preview reports temporary storage errors without stopping its worker or leaving updates blocked.

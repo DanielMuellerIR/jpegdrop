@@ -37,6 +37,8 @@ can be read. HEIC is an input format; JPEGdrop does not produce HEIC files.
 - PNG, AVIF and WebP can preserve transparency. By default, transparency is
   flattened onto white; a custom background color is available in Settings.
   JPEG always removes transparency. A warning reports affected images.
+  Since 2.12.2, transparency keys in 16-bit grayscale PNGs are also applied before
+  conversion to 8-bit pixels.
 - A maximum image edge optionally resizes images proportionally with Lanczos,
   after orientation is applied. Smaller images are never enlarged.
 - Animated or multi-image files are rejected. The first frame is not silently

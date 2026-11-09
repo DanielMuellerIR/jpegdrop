@@ -38,6 +38,8 @@ keine HEIC-Dateien.
 - PNG, AVIF und WebP können Transparenz erhalten. Standardmäßig wird sie auf
   Weiß gelegt; die Hintergrundfarbe lässt sich in den Einstellungen wählen.
   JPEG entfernt Transparenz immer. Eine Warnung nennt betroffene Bilder.
+  Seit 2.12.2 werden auch Transparenzschlüssel in 16-Bit-Graustufen-PNGs vor der
+  Umwandlung in 8-Bit-Pixel angewendet.
 - Eine maximale Bildkante verkleinert optional proportional mit Lanczos, nach
   dem Einrechnen der Orientierung. Kleine Bilder werden niemals vergrößert.
 - Animationen und Mehrbilddateien werden abgewiesen. Das erste Bild wird nicht
