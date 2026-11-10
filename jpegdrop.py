@@ -58,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.input_plan import (IMAGE_EXTENSIONS, InventoryOptions, InputEntry,
                             inventory_inputs, MAX_IMAGES)
 
-__version__ = "2.12.2"
+__version__ = "2.12.3"
 
 # HEIC/HEIF-Decoder bei Pillow registrieren (für iPhone-Aufnahmen).
 # Optional gehalten: fehlt das Paket, läuft alles außer HEIC weiter.
@@ -639,6 +639,7 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None,
 
     # 1) EXIF-Orientierung ins Pixelbild einrechnen, solange wir die EXIF noch
     #    haben. Danach darf die Orientierung gefahrlos verworfen werden.
+    is_gray16 = img.mode in ("I;16", "I;16L", "I;16B", "I;16N") or (img.mode == "I" and img.format == "PNG")
     img = ImageOps.exif_transpose(img)
 
     # Farbprofil merken, BEVOR wir den Modus ändern (Konvertierungen können
@@ -650,18 +651,23 @@ def normalize_image(img: Image.Image, *, notices: list[dict] | None = None,
     # Transparenz-Schlüsselwerte (z. B. PNG tRNS in RGB-, L- oder P-Modus)
     # vor der Profilumrechnung und dem Entfernen der Metadaten in einen
     # expliziten Alphakanal überführen.
-    if "transparency" in img.info and img.mode not in ("RGBA", "LA"):
-        if img.mode in ("I", "I;16", "I;16L", "I;16B", "I;16N"):
-            # Pillow übernimmt tRNS bei 16-Bit-Graustufen nicht nach RGBA.
+    if is_gray16:
+        alpha = None
+        if "transparency" in img.info:
             # Den Schlüssel vor der Reduktion auf 8 Bit vergleichen.
             alpha = ImageMath.lambda_eval(
                 lambda args: (args["gray"] != img.info["transparency"]) * 255,
                 gray=img.convert("I"),
             ).convert("L")
-            img = img.convert("RGBA")
+        # convert("L") allein begrenzt auf 255. Den gesamten 16-Bit-Bereich
+        # stattdessen auf den nächstliegenden 8-Bit-Tonwert abbilden.
+        img = ImageMath.lambda_eval(
+            lambda args: args["gray"] / 257 + 0.5, gray=img.convert("F"),
+        ).convert("L")
+        if alpha is not None:
             img.putalpha(alpha)
-        else:
-            img = img.convert("LA" if img.mode == "L" else "RGBA")
+    elif "transparency" in img.info and img.mode not in ("RGBA", "LA"):
+        img = img.convert("LA" if img.mode == "L" else "RGBA")
 
     # 2) Das Profil im ursprünglichen Farbmodus anwenden. CMYK zuerst nach
     #    RGB zu konvertieren verwirft die Farbinformationen für das CMYK-ICC.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.12.3 — 2026-11-10
+
+- Scale 16-bit grayscale PNG tones across the full 8-bit range while preserving transparency keys.
+
 ## 2.12.2 — 2026-11-09
 
 - Preserve 16-bit grayscale PNG transparency keys before conversion to 8-bit pixels, including flattening onto the selected background.
